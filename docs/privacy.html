@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DrivePass — Privacy Policy</title>
+  <style>
+    :root { --bg:#ffffff; --fg:#1f2330; --muted:#6b7280; --border:#e5e7eb; --accent:#4f46e5; --chip:#f3f4f6; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#14161d; --fg:#e8eaf0; --muted:#9aa1b1; --border:#2c303b; --accent:#6366f1; --chip:#21242e; }
+    }
+    body { max-width: 760px; margin: 40px auto 80px; padding: 0 24px;
+           font: 16px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+           background: var(--bg); color: var(--fg); }
+    h1 { font-size: 28px; } h2 { font-size: 20px; margin-top: 34px; }
+    .muted { color: var(--muted); }
+    code { background: var(--chip); padding: 1px 6px; border-radius: 6px; font-size: 14px; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <h1>🔑 DrivePass Privacy Policy</h1>
+  <p class="muted">Last updated: July 26, 2026</p>
+
+  <p><strong>The short version: we run no servers, we collect nothing, and we couldn't
+  read your passwords even if we wanted to.</strong></p>
+
+  <h2>What DrivePass stores, and where</h2>
+  <table>
+    <tr><th>Data</th><th>Where it lives</th><th>Who can read it</th></tr>
+    <tr>
+      <td>Your logins (sites, usernames, passwords, notes)</td>
+      <td>Encrypted with AES-256-GCM into a single file (<code>vault.enc</code>) on your
+          device, and — only if you connect Drive sync — in <em>your own</em> Google Drive.</td>
+      <td>Only you, after entering your master password.</td>
+    </tr>
+    <tr>
+      <td>Your master password</td>
+      <td>Nowhere. It is used on-device to derive the encryption key
+          (PBKDF2-SHA256, 210,000 iterations) and is never written to disk,
+          never transmitted, never logged.</td>
+      <td>No one.</td>
+    </tr>
+    <tr>
+      <td>Unlocked session key</td>
+      <td>Browser session memory only (<code>chrome.storage.session</code>);
+          cleared when the browser closes or the vault auto-locks.</td>
+      <td>Only this extension, only on your device.</td>
+    </tr>
+    <tr>
+      <td>Settings (auto-lock time, sync state, Google account email)</td>
+      <td>Locally in your browser's extension storage.</td>
+      <td>Only this extension.</td>
+    </tr>
+  </table>
+
+  <h2>What DrivePass sends over the network</h2>
+  <ul>
+    <li><strong>Google Drive API</strong> (<code>www.googleapis.com</code>) — only if you
+      connect Drive sync: uploads/downloads your already-encrypted <code>vault.enc</code>.
+      DrivePass uses Google's narrowest Drive OAuth scope
+      (<code>drive.file</code>), which grants access solely to files the extension itself
+      created — it cannot see anything else in your Drive. Google's handling of your
+      Drive data is governed by <a href="https://policies.google.com/privacy">Google's
+      privacy policy</a>.</li>
+    <li><strong>Have I Been Pwned</strong> (<code>api.pwnedpasswords.com</code>) — only when
+      you explicitly click "Check my passwords" in the Security Center. Each password is
+      hashed on your device and only the <strong>first 5 characters of the SHA-1 hash</strong>
+      are sent (k-anonymity). The password itself, your usernames, and your sites are
+      never transmitted and cannot be reconstructed from the prefix.</li>
+  </ul>
+  <p>That is the complete list. There are no other network calls.</p>
+
+  <h2>What DrivePass does NOT do</h2>
+  <ul>
+    <li>No analytics, telemetry, or crash reporting.</li>
+    <li>No advertising, ad networks, or tracking of any kind.</li>
+    <li>No selling, sharing, or transferring of any user data to anyone —
+        including data brokers or advertising platforms.</li>
+    <li>No collection of browsing history. The autofill content script reads login
+        forms only to fill or offer to save credentials, entirely on-device.</li>
+    <li>No accounts. We don't know who you are, and we like it that way.</li>
+  </ul>
+
+  <h2>Affiliate disclosure</h2>
+  <p>The Security Center's <strong>Recommendations</strong> tab lists security products
+  via partner (affiliate) links. If you click one and make a purchase, DrivePass may
+  earn a commission at no extra cost to you — this funds the free extension. These
+  links open only when you click them; nothing is applied, injected, or tracked
+  passively, and none of your vault data is involved in or shared with any partner.</p>
+
+  <h2>Chrome Web Store Limited Use compliance</h2>
+  <p>DrivePass's use of information received from Google APIs adheres to the
+  <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API
+  Services User Data Policy</a>, including its Limited Use requirements. All permissions
+  exist solely to provide the single disclosed purpose: managing your passwords.</p>
+
+  <h2>Your control</h2>
+  <ul>
+    <li>Disconnect Google Drive at any time (Settings) — sync stops; the local vault remains yours.</li>
+    <li>Delete <code>vault.enc</code> from your Google Drive to remove all cloud data.</li>
+    <li>Uninstall the extension to remove all local data.</li>
+  </ul>
+
+  <h2>Changes & contact</h2>
+  <p>If our data practices ever change, this page and the extension's in-app
+  disclosures will be updated before the change takes effect, and the "last updated"
+  date revised. Questions: <a href="mailto:zubair@bracsaajan.com">zubair@bracsaajan.com</a>.</p>
+</body>
+</html>

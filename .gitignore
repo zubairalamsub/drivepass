@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Build / packaging output
+*.zip
+dist/
+build/
+
+# Python bytecode (icon generator)
+__pycache__/
+*.pyc

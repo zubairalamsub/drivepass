@@ -1,0 +1,66 @@
+{
+  "_note": "Bundled partner recommendations shown in the Security Center. Replace each `url` with your approved affiliate/tracking link as programs are approved; ship updates via normal extension releases (MV3 forbids remotely-loaded logic; remotely swapping this file is not needed and static bundling keeps review simple). Links must only open on explicit user click — never auto-apply codes or cookies (CWS affiliate policy, June 2025).",
+  "disclosure": "Some of these are partner links — DrivePass may earn a commission if you buy, at no extra cost to you. This is what keeps DrivePass free. We only list tools we believe genuinely improve your security.",
+  "offers": [
+    {
+      "id": "nordvpn",
+      "category": "VPN",
+      "icon": "🌐",
+      "title": "NordVPN",
+      "tagline": "Encrypt your traffic on public Wi-Fi",
+      "benefit": "Passwords are only half the story — a VPN stops snooping on airport, café, and hotel networks where logins are most exposed.",
+      "cta": "Get NordVPN",
+      "url": "https://nordvpn.com/"
+    },
+    {
+      "id": "surfshark",
+      "category": "VPN",
+      "icon": "🦈",
+      "title": "Surfshark",
+      "tagline": "Budget VPN with unlimited devices",
+      "benefit": "One subscription covers every device you own — useful if your whole household shares logins you keep in DrivePass.",
+      "cta": "Get Surfshark",
+      "url": "https://surfshark.com/"
+    },
+    {
+      "id": "yubikey",
+      "category": "Hardware key",
+      "icon": "🔑",
+      "title": "YubiKey",
+      "tagline": "Phishing-proof two-factor hardware key",
+      "benefit": "The strongest 2FA there is. Even if a password leaks, an attacker can't sign in without the physical key — protect your Google account, and your vault protects itself.",
+      "cta": "Shop YubiKeys",
+      "url": "https://www.yubico.com/"
+    },
+    {
+      "id": "deleteme",
+      "category": "Data removal",
+      "icon": "🧹",
+      "title": "DeleteMe",
+      "tagline": "Remove your info from data brokers",
+      "benefit": "Data brokers publish the personal details attackers use for password-reset and phishing attacks. DeleteMe scrubs them on your behalf, continuously.",
+      "cta": "Try DeleteMe",
+      "url": "https://joindeleteme.com/"
+    },
+    {
+      "id": "aura",
+      "category": "Identity monitoring",
+      "icon": "🛰️",
+      "title": "Aura",
+      "tagline": "All-in-one identity theft protection",
+      "benefit": "Monitors the dark web for your accounts, alerts on new credit activity, and insures against identity theft — the safety net for when a breach does happen.",
+      "cta": "Try Aura",
+      "url": "https://www.aura.com/"
+    },
+    {
+      "id": "backblaze",
+      "category": "Backup",
+      "icon": "💾",
+      "title": "Backblaze",
+      "tagline": "Unlimited computer backup",
+      "benefit": "Ransomware can't blackmail you if your files live safely off-machine. Simple, automatic, unlimited backup for a few dollars a month.",
+      "cta": "Try Backblaze",
+      "url": "https://www.backblaze.com/"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "DrivePass — Password Manager",
+  "version": "1.0.0",
+  "description": "Free zero-knowledge password manager. Your encrypted vault lives in your own Google Drive — no company server to breach.",
+  "minimum_chrome_version": "116",
+  "permissions": ["identity", "storage", "scripting", "activeTab", "alarms", "idle", "tabs"],
+  "host_permissions": [
+    "https://www.googleapis.com/*",
+    "https://api.pwnedpasswords.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "DrivePass",
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_page": "src/options/options.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["src/content/content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "oauth2": {
+    "client_id": "874136335965-fgef89ngamp115jpsefhm52amld7u30q.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/drive.file"]
+  },
+  "commands": {
+    "fill-login": {
+      "suggested_key": {
+        "default": "Alt+Shift+L",
+        "mac": "Alt+Shift+L"
+      },
+      "description": "Autofill credentials for current site"
+    }
+  }
+}

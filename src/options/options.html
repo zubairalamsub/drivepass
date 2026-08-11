@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DrivePass — Settings</title>
+    <link rel="stylesheet" href="../common.css" />
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <h1>🔑 DrivePass Settings</h1>
+
+    <section>
+      <h2>Google Drive sync</h2>
+      <p class="muted">
+        Your vault is encrypted on this device before upload. Google Drive stores
+        only an unreadable <code>vault.enc</code> file — this extension can access
+        that one file and nothing else in your Drive.
+      </p>
+      <p id="drive-state" class="status">Checking…</p>
+      <button id="connect-btn">Connect Google Drive</button>
+      <button id="sync-btn" class="ghost" hidden>Sync now</button>
+      <button id="disconnect-btn" class="danger" hidden>Disconnect</button>
+      <p id="drive-msg" class="status"></p>
+    </section>
+
+    <section>
+      <h2>Auto-lock &amp; Security</h2>
+      <label>Lock the vault after
+        <select id="autolock">
+          <option value="1">1 minute</option>
+          <option value="5">5 minutes</option>
+          <option value="15">15 minutes</option>
+          <option value="30">30 minutes</option>
+          <option value="60">1 hour</option>
+          <option value="0">Never (until browser closes)</option>
+        </select>
+      </label>
+      <p id="autolock-msg" class="status"></p>
+    </section>
+
+    <section>
+      <h2>Appearance &amp; Theme</h2>
+      <label>Theme Mode
+        <select id="theme-select">
+          <option value="system">💻 System Default</option>
+          <option value="dark">🌙 Dark Mode</option>
+          <option value="light">☀️ Light Mode</option>
+        </select>
+      </label>
+    </section>
+
+    <section>
+      <h2>PIN Quick Access</h2>
+      <p class="muted">Set a PIN to quickly unlock DrivePass without typing your full master password every time.</p>
+      <p class="muted" style="border-left:3px solid var(--danger); padding-left:10px;">
+        <strong>Security tradeoff:</strong> a PIN stores your vault key on this device, protected only by
+        the PIN. If someone copies this computer's profile they can try to guess it offline, so a PIN is
+        weaker than your master password. Use it only on a device you trust, and choose a long, non-obvious PIN.
+      </p>
+      <p id="pin-state" class="status">Checking PIN status…</p>
+      <label>PIN (6+ digits)<input id="pin-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="12" minlength="6" placeholder="At least 6 digits" style="max-width:200px;" /></label>
+      <button id="set-pin-btn">Enable PIN Unlock</button>
+      <button id="remove-pin-btn" class="danger" hidden>Remove PIN</button>
+      <p id="pin-msg" class="status"></p>
+    </section>
+
+    <section>
+      <h2>Import &amp; Export Vault Data</h2>
+      <p class="muted">Import items from Bitwarden (CSV or JSON), LastPass, 1Password, or Google Chrome / Edge files.</p>
+      <label>Select CSV or JSON file to import
+        <input id="import-file" type="file" accept=".csv,.json" />
+      </label>
+      <button id="import-btn" class="ghost">Import File (CSV / JSON)</button>
+      <p id="import-msg" class="status"></p>
+
+      <hr style="border:0; border-top:1px solid var(--border); margin:18px 0;" />
+      <p class="muted">Export your decrypted entries to CSV or encrypted raw JSON backup.</p>
+      <button id="export-csv-btn" class="ghost">Export as CSV</button>
+      <button id="export-json-btn" class="ghost">Export Encrypted JSON</button>
+      <button id="export-dec-json-btn" class="ghost">Export Decrypted JSON (Bitwarden-compatible)</button>
+    </section>
+
+    <section>
+      <h2>Trash &amp; Recovery Bin</h2>
+      <p class="muted">Recently deleted items can be restored here before being permanently purged.</p>
+      <div id="trash-list" style="margin-top:10px;"></div>
+      <button id="purge-all-btn" class="danger" style="margin-top:10px;">Empty Trash</button>
+    </section>
+
+    <section>
+      <h2>Security Center</h2>
+      <p class="muted">
+        Check your logins for reused, weak, old, and breached passwords — analysis
+        runs entirely on this device. Also includes our recommended security tools
+        (clearly-marked partner links keep DrivePass free).
+      </p>
+      <button id="security-btn" class="ghost">Open Security Center</button>
+    </section>
+
+    <section>
+      <h2>Privacy &amp; your data</h2>
+      <ul class="muted" style="padding-left:18px; margin:6px 0;">
+        <li>Your vault is encrypted <strong>on this device</strong> with your master password
+          (AES-256-GCM). Google Drive only ever stores the unreadable <code>vault.enc</code>.</li>
+        <li>The optional breach check in the Security Center sends only an anonymous
+          5-character hash prefix to <code>api.pwnedpasswords.com</code> — never a password —
+          and only when you click the check button.</li>
+        <li>DrivePass has <strong>no analytics, no tracking, and no ads</strong>. Nothing about
+          you or your vault is collected, sold, or shared. Partner links in the Security
+          Center open only when you click them.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Change master password</h2>
+      <p class="muted">Re-encrypts your whole vault with a new key. You must be unlocked.</p>
+      <label>Current master password<input id="cur-pw" type="password" /></label>
+      <label>New master password<input id="new-pw" type="password" /></label>
+      <label>Confirm new password<input id="new-pw2" type="password" /></label>
+      <br /><button id="change-btn">Change password</button>
+      <p id="change-msg" class="status"></p>
+    </section>
+
+    <p class="muted">
+      <strong>Reminder:</strong> there is no password reset. If you forget your master
+      password, the vault cannot be decrypted by anyone — including you.
+    </p>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

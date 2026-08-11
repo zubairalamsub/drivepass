@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="security.css" />
+    <title>DrivePass — Security Center</title>
+  </head>
+  <body>
+    <header class="page-head">
+      <h1><span class="logo">🛡️</span> Security Center</h1>
+      <p class="muted">
+        Health checks run <strong>entirely on this device</strong> — your passwords are
+        never uploaded or logged. The optional breach check sends only an anonymous
+        5-character hash prefix (details on that tab).
+      </p>
+    </header>
+
+    <!-- Locked / no vault -->
+    <section id="view-locked" class="card center" hidden>
+      <h2>Vault is locked</h2>
+      <p class="muted">Unlock DrivePass from the toolbar popup, then reload this page.</p>
+    </section>
+
+    <div id="view-main" hidden>
+      <!-- Overall Security Score Hero Card -->
+      <section class="card" style="display:flex; align-items:center; gap:24px; background:linear-gradient(135deg, rgba(99,102,241,0.06) 0%, rgba(79,70,229,0.12) 100%); border-color:rgba(99,102,241,0.25);">
+        <div style="text-align:center; flex:0 0 110px;">
+          <div id="score-circle" style="width:90px; height:90px; border-radius:50%; border:6px solid var(--accent); display:grid; place-items:center; margin:0 auto;">
+            <span id="score-num" style="font-size:28px; font-weight:800; color:var(--accent);">--</span>
+          </div>
+          <span id="score-badge" class="pill good" style="margin-top:8px;">Calculating…</span>
+        </div>
+        <div style="flex:1;">
+          <h2 style="margin:0 0 4px; font-size:20px;">Vault Health Score</h2>
+          <p id="score-desc" class="muted" style="margin:0;">Analyzing password uniqueness, strength, 2FA coverage, and breach history…</p>
+        </div>
+      </section>
+
+      <!-- Summary -->
+      <section class="summary" id="summary"></section>
+
+      <!-- Tabs -->
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="health" role="tab">Password Health</button>
+        <button class="tab" data-tab="totp" role="tab">2FA Coverage</button>
+        <button class="tab" data-tab="breach" role="tab">Breach Check</button>
+        <button class="tab" data-tab="offers" role="tab">Recommendations</button>
+      </nav>
+
+      <!-- Health tab -->
+      <section id="tab-health" class="tabpanel">
+        <div class="card">
+          <h2>♻️ Reused passwords <span id="reused-count" class="pill"></span></h2>
+          <p class="muted">
+            One leak shouldn't open several doors. Give each of these logins its own
+            unique password.
+          </p>
+          <div id="reused-list"></div>
+        </div>
+        <div class="card">
+          <h2>🫤 Weak passwords <span id="weak-count" class="pill"></span></h2>
+          <p class="muted">
+            Short or low-variety passwords fall quickly to guessing attacks. Aim for
+            12+ characters with mixed types.
+          </p>
+          <div id="weak-list"></div>
+        </div>
+        <div class="card">
+          <h2>🕰️ Old passwords <span id="old-count" class="pill"></span></h2>
+          <p class="muted">Not updated in over a year. Worth rotating for important accounts.</p>
+          <div id="old-list"></div>
+        </div>
+      </section>
+
+      <!-- 2FA Coverage tab -->
+      <section id="tab-totp" class="tabpanel" hidden>
+        <div class="card">
+          <h2>🔑 Two-Factor Authentication (2FA) Audit</h2>
+          <p class="muted">
+            Adding 2FA (TOTP) codes blocks 99% of automated credential stuffing attacks.
+          </p>
+          <div id="totp-list"></div>
+        </div>
+      </section>
+
+      <!-- Breach tab -->
+      <section id="tab-breach" class="tabpanel" hidden>
+        <div class="card">
+          <h2>🔎 Check against known data breaches</h2>
+          <p class="muted">
+            Compares your passwords against the <strong>Have&nbsp;I&nbsp;Been&nbsp;Pwned</strong>
+            database of billions of leaked passwords.
+          </p>
+          <div class="notice">
+            <strong>What leaves your device if you run this:</strong> each password is
+            hashed (SHA-1) locally and only the <strong>first 5 characters of the
+            hash</strong> are sent to <code>api.pwnedpasswords.com</code> — never the
+            password, never your usernames or sites. The service mathematically cannot
+            reconstruct your password from this (k-anonymity). Nothing is sent until
+            you click the button.
+          </div>
+          <button id="breach-btn" class="primary">Check my passwords</button>
+          <p id="breach-progress" class="muted" hidden></p>
+          <p id="breach-error" class="error" hidden></p>
+          <div id="breach-results" hidden>
+            <h3 id="breach-headline"></h3>
+            <div id="breach-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Recommendations tab -->
+      <section id="tab-offers" class="tabpanel" hidden>
+        <div class="notice" id="offers-disclosure"></div>
+        <div id="offers-grid" class="offers-grid"></div>
+      </section>
+    </div>
+
+    <footer class="muted center">
+      DrivePass is free and shows no ads. Health analysis is local-only; nothing about
+      your vault is collected, sold, or shared.
+    </footer>
+
+    <script type="module" src="security.js"></script>
+  </body>
+</html>

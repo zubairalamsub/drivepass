@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DrivePass — Scan 2FA QR</title>
+    <style>
+      :root {
+        --accent: #4f46e5; --border: #e5e7eb; --muted: #6b7280;
+        --danger: #dc2626; --ok: #16a34a; --bg: #ffffff; --fg: #1f2330; --card: #f9fafb;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root { --bg:#1b1e27; --fg:#e8eaf0; --muted:#9aa1b1; --border:#2c303b; --accent:#6366f1; --card:#232733; }
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--fg);
+        font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; padding: 28px 16px; }
+      h1 { font-size: 20px; display: flex; gap: 8px; align-items: center; margin: 0 0 4px; }
+      .muted { color: var(--muted); font-size: 13px; }
+      .stage { width: 100%; max-width: 420px; }
+      .videowrap { position: relative; width: 100%; aspect-ratio: 1/1; background: #000;
+        border-radius: 16px; overflow: hidden; margin: 18px 0; border: 1px solid var(--border); }
+      video { width: 100%; height: 100%; object-fit: cover; }
+      .reticle { position: absolute; inset: 16%; border: 3px solid rgba(255,255,255,.85);
+        border-radius: 16px; box-shadow: 0 0 0 100vmax rgba(0,0,0,.25); }
+      .status { text-align: center; min-height: 22px; font-size: 14px; }
+      .status.err { color: var(--danger); }
+      .status.ok { color: var(--ok); font-weight: 600; }
+      .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; text-align: center; }
+      .card .issuer { font-size: 18px; font-weight: 700; }
+      .card .account { color: var(--muted); }
+      .code { font-family: ui-monospace, Menlo, monospace; font-size: 30px; letter-spacing: 4px; font-weight: 700; color: var(--accent); margin: 10px 0; }
+      button { font: 15px system-ui; padding: 10px 16px; border-radius: 10px; border: 1px solid var(--border);
+        background: var(--bg); color: var(--fg); cursor: pointer; margin: 4px; }
+      button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+      .row { display: flex; justify-content: center; flex-wrap: wrap; margin-top: 10px; }
+    </style>
+  </head>
+  <body>
+    <div class="stage">
+      <h1>🔐 Scan 2FA QR code</h1>
+      <p class="muted">Point your camera at the QR code shown by the website's two-factor setup page.</p>
+
+      <div id="video-stage">
+        <div class="videowrap">
+          <video id="video" playsinline muted></video>
+          <div class="reticle"></div>
+        </div>
+        <p id="status" class="status">Requesting camera…</p>
+      </div>
+
+      <div id="result-stage" hidden>
+        <div class="card">
+          <div class="issuer" id="r-issuer"></div>
+          <div class="account" id="r-account"></div>
+          <div class="code" id="r-code">------</div>
+          <p class="muted" id="r-note">Saved to your vault ✓</p>
+        </div>
+        <div class="row">
+          <button id="scan-again" class="primary">Scan another</button>
+          <button id="done-btn">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="../vendor/jsQR.js"></script>
+    <script type="module" src="scan.js"></script>
+  </body>
+</html>

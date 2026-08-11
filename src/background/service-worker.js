@@ -17,6 +17,7 @@ import {
   createVaultFile as buildVaultFile,
   openVaultFile,
   sealVault,
+  rekeyVault,
   mergeVaults,
   liveEntries,
   trashEntries,
@@ -30,6 +31,7 @@ import {
   getToken,
   getUserEmail,
   findVaultFile,
+  getFileMeta,
   createVaultFile as driveCreateFile,
   updateVaultFile,
   downloadVaultFile,
@@ -75,6 +77,7 @@ async function hydrate() {
 async function lock() {
   sessionKey = null;
   vaultData = null;
+  invalidateBadgeCache();
   await chrome.storage.session.remove("sess_rawKey");
   await chrome.alarms.clear(AUTO_LOCK_ALARM);
 }
@@ -92,20 +95,68 @@ function touchActivity() {
 }
 
 // ---- vault persistence -----------------------------------------------------
+
+// Raised when the Drive copy can't be reconciled with ours. Distinct from a
+// network/auth failure so the caller knows not to retry with fresh consent.
+class VaultConflictError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "VaultConflict";
+  }
+}
+
+// Fold any changes another device made into `vaultData` before we overwrite
+// the Drive copy. Without this, a plain PATCH silently drops whatever the
+// other device wrote since our last sync. Returns true if a merge happened.
+async function mergeRemoteIfChanged(fileId, knownModifiedTime) {
+  const meta = await getFileMeta(fileId);
+  if (!meta) return false; // file is gone; the push below will recreate it
+  if (knownModifiedTime && meta.modifiedTime === knownModifiedTime) return false;
+
+  const remoteFile = await downloadVaultFile(fileId);
+  let remoteData;
+  try {
+    remoteData = await decryptJSON(sessionKey, remoteFile.iv, remoteFile.ciphertext);
+  } catch {
+    // We cannot read the Drive copy, so we cannot merge it — most likely it was
+    // re-keyed on another device. Overwriting would destroy a vault we can't
+    // read, so refuse and surface it rather than "winning" the conflict.
+    throw new VaultConflictError(
+      "The copy in Drive can't be opened with this key — it may have been " +
+        "re-keyed on another device. Leaving it untouched."
+    );
+  }
+  vaultData = mergeVaults(vaultData, remoteData);
+  return true;
+}
+
 // Seal the current vault, cache it locally, and push to Drive if connected.
 async function persistVault() {
+  // Local cache first, so the write survives even if Drive is unreachable.
   cachedFileObj = await sealVault(sessionKey, vaultData, cachedFileObj);
   await chrome.storage.local.set({ cache_file: cachedFileObj });
+  invalidateBadgeCache(); // entries changed; counts may have too
 
   const cfg = await getConfig();
   if (!cfg.driveConnected) return { synced: false };
 
   async function pushToDrive() {
-    let { cache_fileId } = await chrome.storage.local.get("cache_fileId");
+    let { cache_fileId, cache_modifiedTime } = await chrome.storage.local.get([
+      "cache_fileId",
+      "cache_modifiedTime",
+    ]);
     if (!cache_fileId) {
       const found = await findVaultFile(FILE_NAME);
       cache_fileId = found?.id;
+      cache_modifiedTime = found?.modifiedTime;
     }
+
+    if (cache_fileId && (await mergeRemoteIfChanged(cache_fileId, cache_modifiedTime))) {
+      // The merge changed our in-memory vault — re-seal so we push the union.
+      cachedFileObj = await sealVault(sessionKey, vaultData, cachedFileObj);
+      await chrome.storage.local.set({ cache_file: cachedFileObj });
+    }
+
     const result = cache_fileId
       ? await updateVaultFile(cache_fileId, cachedFileObj)
       : await driveCreateFile(FILE_NAME, cachedFileObj, false);
@@ -121,11 +172,15 @@ async function persistVault() {
     await getToken(false);
     return await pushToDrive();
   } catch (e) {
+    // A conflict is not an auth problem — re-prompting for consent would just
+    // throw a Google window at the user and fail the same way.
+    if (e?.name === "VaultConflict") return { synced: false, error: e.message };
     // If token expired or first attempt failed, retry once with a fresh token
     try {
       await getToken(true);
       return await pushToDrive();
     } catch (retryErr) {
+      if (retryErr?.name === "VaultConflict") return { synced: false, error: retryErr.message };
       return { synced: false, error: retryErr.message };
     }
   }
@@ -207,7 +262,8 @@ async function handleUnlock({ password }) {
   }
   if (!fileObj) throw new Error("No vault found yet. Create one first.");
 
-  const { key, data } = await openVaultFile(fileObj, password); // throws on wrong password
+  // throws on wrong password
+  const { key, data, needsKdfUpgrade } = await openVaultFile(fileObj, password);
   sessionKey = key;
   vaultData = data;
   cachedFileObj = fileObj;
@@ -215,10 +271,30 @@ async function handleUnlock({ password }) {
   await chrome.storage.local.set({ cache_file: fileObj });
   await scheduleAutoLock();
 
-  // Auto-sync with Drive if connected
+  // Vault predates a KDF cost increase — migrate it while we still hold the
+  // master password. Best-effort: a failure here must not block unlock.
+  const upgradeKdf = async () => {
+    if (!needsKdfUpgrade) return;
+    try {
+      const up = await rekeyVault(password, vaultData);
+      sessionKey = up.key;
+      cachedFileObj = up.file;
+      await chrome.storage.session.set({ sess_rawKey: await exportRawKey(up.key) });
+      await persistVault();
+    } catch {
+      /* keep the vault open at its old cost; retry on the next unlock */
+    }
+  };
+
+  // Order matters: merging reads the Drive copy with the key it was written
+  // under, so the sync has to finish before we change keys underneath it.
   const cfg2 = await getConfig();
   if (cfg2.driveConnected) {
-    handleSync().catch(() => { /* silent background sync failure */ });
+    handleSync()
+      .then(upgradeKdf)
+      .catch(() => { /* silent background sync failure */ });
+  } else {
+    await upgradeKdf();
   }
 
   return { ok: true };
@@ -301,6 +377,11 @@ async function handleToggleFavorite({ id }) {
 }
 
 async function handleScheduleClearClipboard() {
+  // Remember which tab was in front when the copy happened. The alarm fires
+  // 30s later, by which time the active tab may be a different one — clearing
+  // there would reach into a page that was never involved.
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  await chrome.storage.session.set({ clipboard_tabId: tab?.id ?? null });
   chrome.alarms.create("drivepass-clear-clipboard", { delayInMinutes: 0.5 });
   return { ok: true };
 }
@@ -316,7 +397,10 @@ async function handleImportEntries({ entries }) {
       (x) => x.url && e.url && x.url.toLowerCase() === e.url.toLowerCase() && x.username === e.username
     );
     if (!isDuplicate) {
-      vaultData.entries.push(newEntry(e));
+      // Mint a fresh id rather than trusting one from the imported file: a
+      // colliding id would give the vault two entries the same id, which the
+      // merge and delete paths both key on.
+      vaultData.entries.push(newEntry({ ...e, id: undefined }));
       imported++;
     }
   }
@@ -367,22 +451,63 @@ async function handleDeleteEntry({ id }) {
   return { ok: true, sync };
 }
 
-async function handleGetMatches({ url }) {
-  if (!(await hydrate())) return { locked: true, matches: [] };
-  let host = "";
+function hostFromUrl(url) {
   try {
-    host = new URL(url).hostname;
+    return new URL(url).hostname;
   } catch {
-    /* ignore */
+    return "";
   }
+}
+
+// The host a message actually came from. A content script can put anything in
+// the message body, so for anything that gates access to a secret we trust the
+// sender the browser reports, never the caller's own claim.
+function senderHost(sender) {
+  if (!sender) return "";
+  if (sender.origin) return hostFromUrl(sender.origin);
+  if (sender.tab?.url) return hostFromUrl(sender.tab.url);
+  return "";
+}
+
+// Which entries apply to this page — WITHOUT their secrets. The content script
+// runs on every site the user visits; handing it plaintext passwords on page
+// load puts them in reach of any bug in it, for no benefit. It only needs
+// enough to draw the dropdown, and asks for the secret when the user picks one.
+async function handleGetMatches({ url }, sender) {
+  if (!(await hydrate())) return { locked: true, matches: [] };
+  const host = senderHost(sender) || hostFromUrl(url);
   const matches = matchEntriesForHost(vaultData, host).map((e) => ({
     id: e.id,
     name: e.name,
     username: e.username,
-    password: e.password,
-    totp: e.totp,
+    hasTotp: !!(e.totp || "").trim(),
   }));
   return { locked: false, matches };
+}
+
+// Release one credential, for one entry, to a page that is actually entitled
+// to it. Re-runs the host match against the browser-reported sender so a
+// compromised content script cannot ask for an arbitrary entry by id.
+async function handleGetCredential({ id }, sender) {
+  if (!(await hydrate())) return { ok: false, locked: true };
+  const host = senderHost(sender);
+  if (!host) throw new Error("Could not determine the requesting page.");
+  const entry = matchEntriesForHost(vaultData, host).find((e) => e.id === id);
+  if (!entry) throw new Error("No credential for this site.");
+  touchActivity();
+  return {
+    ok: true,
+    credential: { username: entry.username, password: entry.password, totp: entry.totp },
+  };
+}
+
+// host -> number of matching entries. onUpdated fires twice per navigation and
+// again on every tab switch, and each miss walks the whole entry list parsing
+// URLs. Cleared whenever the vault changes, so a stale count can't linger.
+const badgeCountCache = new Map();
+
+function invalidateBadgeCache() {
+  badgeCountCache.clear();
 }
 
 async function updateBadge(tabId, url) {
@@ -390,9 +515,13 @@ async function updateBadge(tabId, url) {
     chrome.action.setBadgeText({ text: '', tabId });
     return;
   }
-  let host = '';
-  try { host = new URL(url).hostname; } catch { return; }
-  const count = matchEntriesForHost(vaultData, host).length;
+  const host = hostFromUrl(url);
+  if (!host) return;
+  let count = badgeCountCache.get(host);
+  if (count === undefined) {
+    count = matchEntriesForHost(vaultData, host).length;
+    badgeCountCache.set(host, count);
+  }
   chrome.action.setBadgeText({ text: count ? String(count) : '', tabId });
   chrome.action.setBadgeBackgroundColor({ color: '#6366f1', tabId });
 }
@@ -410,15 +539,16 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-// Called by the content script's "save this login?" prompt.
-async function handleSaveFromPage({ url, username, password }) {
+// Called when the user accepts the content script's "save this login?" prompt.
+// The credential is read from the stash the submit handler wrote, not from the
+// message, so the page's password never has to travel back through the banner.
+async function handleSaveFromPage() {
   if (!(await hydrate())) return { ok: false, locked: true };
-  let host = "";
-  try {
-    host = new URL(url).hostname;
-  } catch {
-    /* ignore */
-  }
+  const { pending_save } = await chrome.storage.session.get("pending_save");
+  if (!pending_save?.password) return { ok: false, error: "Nothing to save." };
+  const { url, username, password } = pending_save;
+  const host = hostFromUrl(url);
+
   const existing = matchEntriesForHost(vaultData, host).find((e) => e.username === username);
   if (existing) {
     if (existing.password !== password) {
@@ -427,8 +557,8 @@ async function handleSaveFromPage({ url, username, password }) {
       existing.password = password;
       existing.history = history.slice(0, 10);
       existing.updatedAt = Date.now();
-      await persistVault();
-      return { ok: true, updated: true };
+      const sync = await persistVault();
+      return { ok: true, updated: true, sync };
     }
     return { ok: true, updated: false };
   }
@@ -486,6 +616,12 @@ async function handleSync() {
       return { ok: false, error: "Remote vault uses a different master password." };
     }
     vaultData = mergeVaults(vaultData, remoteData);
+    // Record what we just reconciled against so the push below doesn't
+    // re-download and re-merge the same revision.
+    await chrome.storage.local.set({
+      cache_fileId: found.id,
+      cache_modifiedTime: found.modifiedTime,
+    });
   }
   const sync = await persistVault();
   return { ok: true, sync, count: liveEntries(vaultData).length };
@@ -497,7 +633,24 @@ async function handleStashPending({ url, username, password }) {
 }
 async function handleGetPending() {
   const { pending_save } = await chrome.storage.session.get("pending_save");
-  return { pending: pending_save || null };
+  if (!pending_save) return { pending: null };
+
+  // Suppress the "save this login?" banner when we already hold exactly this
+  // credential. This comparison used to happen in the content script, which
+  // meant shipping it the stored password to compare against.
+  if (await hydrate()) {
+    const host = hostFromUrl(pending_save.url);
+    const known = matchEntriesForHost(vaultData, host).some(
+      (e) => e.username === pending_save.username && e.password === pending_save.password
+    );
+    if (known) {
+      await chrome.storage.session.remove("pending_save");
+      return { pending: null };
+    }
+  }
+  // Never hand the password back to the page — it came from there, and the
+  // banner only needs to name the account.
+  return { pending: { url: pending_save.url, username: pending_save.username } };
 }
 async function handleClearPending() {
   await chrome.storage.session.remove("pending_save");
@@ -519,8 +672,17 @@ async function handleChangeMasterPassword({ current, next }) {
   cachedFileObj = file;
   vaultData = data;
   await chrome.storage.session.set({ sess_rawKey: await exportRawKey(key) });
+
+  // The PIN wraps the OLD master key, which no longer opens this vault. We
+  // cannot re-wrap it (that needs the PIN itself, which we never store), so
+  // drop it and tell the caller to prompt for a new one. Leaving it in place
+  // would make a correct PIN fail with a raw WebCrypto error at unlock.
+  const { pin_config } = await chrome.storage.local.get("pin_config");
+  const pinCleared = !!pin_config;
+  if (pinCleared) await removePin();
+
   const sync = await persistVault();
-  return { ok: true, sync };
+  return { ok: true, sync, pinCleared };
 }
 
 // ---- message routing -------------------------------------------------------
@@ -542,6 +704,7 @@ const ROUTES = {
   SAVE_ENTRY: handleSaveEntry,
   DELETE_ENTRY: handleDeleteEntry,
   GET_MATCHES: handleGetMatches,
+  GET_CREDENTIAL: handleGetCredential,
   SAVE_FROM_PAGE: handleSaveFromPage,
   STASH_PENDING: handleStashPending,
   GET_PENDING: handleGetPending,
@@ -554,13 +717,13 @@ const ROUTES = {
   SCHEDULE_CLEAR_CLIPBOARD: handleScheduleClearClipboard,
 };
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const handler = ROUTES[msg?.type];
   if (!handler) {
     sendResponse({ ok: false, error: "Unknown message type: " + msg?.type });
     return false;
   }
-  handler(msg)
+  handler(msg, sender)
     .then((result) => sendResponse(result ?? { ok: true }))
     .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
   return true;
@@ -569,10 +732,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === AUTO_LOCK_ALARM) lock();
   else if (alarm.name === "drivepass-clear-clipboard") {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tabs.length > 0) {
-      chrome.tabs.sendMessage(tabs[0].id, { type: "CLEAR_CLIPBOARD" }).catch(() => {});
-    }
+    const { clipboard_tabId } = await chrome.storage.session.get("clipboard_tabId");
+    await chrome.storage.session.remove("clipboard_tabId");
+    if (clipboard_tabId == null) return;
+    // The tab may be closed, navigated, or have no content script (chrome://).
+    chrome.tabs
+      .sendMessage(clipboard_tabId, { type: "CLEAR_CLIPBOARD" })
+      .catch(() => { /* nothing to clear through */ });
   }
 });
 
@@ -590,9 +756,15 @@ chrome.commands.onCommand.addListener(async (command) => {
   if (command === "fill-login") {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || !tab.url) return;
-    const res = await handleGetMatches({ url: tab.url });
-    if (res.matches && res.matches.length > 0) {
-      chrome.tabs.sendMessage(tab.id, { type: "FILL_CREDENTIALS", match: res.matches[0] });
-    }
+    if (!(await hydrate())) return;
+    // The keystroke is an explicit request to fill this tab, so we push the
+    // credential to it directly rather than letting the page ask for one.
+    const [entry] = matchEntriesForHost(vaultData, hostFromUrl(tab.url));
+    if (!entry) return;
+    touchActivity();
+    chrome.tabs.sendMessage(tab.id, {
+      type: "FILL_CREDENTIALS",
+      match: { username: entry.username, password: entry.password },
+    }).catch(() => { /* no content script on this page */ });
   }
 });

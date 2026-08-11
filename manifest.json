@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Free zero-knowledge password manager. Your encrypted vault lives in your own Google Drive — no company server to breach.",
   "minimum_chrome_version": "116",
-  "permissions": ["identity", "storage", "scripting", "activeTab", "alarms", "idle", "tabs"],
+  "permissions": ["identity", "storage", "scripting", "activeTab", "alarms", "idle", "tabs", "favicon"],
   "host_permissions": [
     "https://www.googleapis.com/*",
     "https://api.pwnedpasswords.com/*"
@@ -12,6 +12,9 @@
   "background": {
     "service_worker": "src/background/service-worker.js",
     "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; base-uri 'none'"
   },
   "action": {
     "default_title": "DrivePass",

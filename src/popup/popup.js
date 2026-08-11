@@ -1,7 +1,7 @@
 // popup.js — DrivePass popup UI logic.
-import { generatePassword } from "../lib/crypto.js";
+import { generatePassword, passwordEntropyBits } from "../lib/crypto.js";
 import { generateTOTP, getTotpTimeRemaining, parseTotpSecret, parseOtpauthURI } from "../lib/totp.js";
-import { generatePassphrase } from "../lib/passphrase.js";
+import { generatePassphrase, passphraseEntropyBits } from "../lib/passphrase.js";
 import { applyTheme } from "../lib/theme.js";
 
 applyTheme();
@@ -87,15 +87,24 @@ async function loadList() {
   showView("list");
 }
 
+// Site icon from Chrome's OWN favicon cache (the "favicon" permission), which
+// resolves entirely on-device. The obvious implementation — Google's
+// s2/favicons endpoint — would announce every hostname in the vault to a third
+// party every time the popup opens, which is exactly what this extension
+// exists to avoid. Sites the user has never visited simply have no icon; the
+// caller falls back to a letter avatar via onerror.
 function getFaviconUrl(url) {
   if (!url) return null;
-  let host;
+  let origin;
   try {
-    host = new URL(url.includes("://") ? url : "https://" + url).hostname;
+    origin = new URL(url.includes("://") ? url : "https://" + url).origin;
   } catch {
     return null;
   }
-  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`;
+  const favicon = new URL(chrome.runtime.getURL("/_favicon/"));
+  favicon.searchParams.set("pageUrl", origin);
+  favicon.searchParams.set("size", "32");
+  return favicon.toString();
 }
 
 function renderList(filter = "") {
@@ -260,6 +269,7 @@ function openEdit(entry) {
       item.appendChild(dateSpan);
       item.addEventListener("click", () => {
         navigator.clipboard.writeText(h.password);
+        send("SCHEDULE_CLEAR_CLIPBOARD");
         toast("Old password copied");
       });
       historyList.appendChild(item);
@@ -282,6 +292,7 @@ $("copy-totp-btn")?.addEventListener("click", () => {
   const code = $("totp-code").textContent;
   if (code && code !== "------" && code !== "INVALID") {
     navigator.clipboard.writeText(code);
+    send("SCHEDULE_CLEAR_CLIPBOARD");
     toast("2FA code copied");
   }
 });
@@ -476,23 +487,18 @@ function updateStudioGenerator() {
     const syms = $("gen-opt-syms").checked;
     $("gen-len-val").textContent = String(len);
 
-    let poolSize = 0;
-    if (upper) poolSize += 26;
-    if (lower) poolSize += 26;
-    if (nums) poolSize += 10;
-    if (syms) poolSize += 20;
-    if (poolSize === 0) poolSize = 26;
-
-    pw = generatePassword(len, { uppercase: upper, lowercase: lower, numbers: nums, symbols: syms });
-    bits = Math.round(len * Math.log2(poolSize));
+    const opts = { upper, lower, digits: nums, symbols: syms };
+    pw = generatePassword(len, opts);
+    // Entropy from the generator's own alphabet, so the meter can't drift from
+    // what is actually generated.
+    bits = Math.round(passwordEntropyBits(len, opts));
   } else {
     const words = parseInt($("gen-words-slider").value, 10);
     const sep = $("gen-sep-select").value;
     $("gen-words-val").textContent = String(words);
 
     pw = generatePassphrase(words, sep, true);
-    // ~96 words list -> ~6.5 bits per word + ~6 bits for number
-    bits = Math.round(words * 6.5 + 6);
+    bits = Math.round(passphraseEntropyBits(words, true));
   }
 
   $("gen-output").textContent = pw;

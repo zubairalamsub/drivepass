@@ -252,8 +252,11 @@
 
         <!-- Passphrase mode controls -->
         <div id="gen-ctrl-passphrase" hidden>
-          <label>Words: <span id="gen-words-val">4</span>
-            <input id="gen-words-slider" type="range" min="3" max="7" value="4" />
+          <!-- This wordlist carries ~6.6 bits per word, so the old 3-7 range
+               topped out around 53 bits. The ceiling is raised so a passphrase
+               can actually reach a defensible strength. -->
+          <label>Words: <span id="gen-words-val">9</span>
+            <input id="gen-words-slider" type="range" min="4" max="14" value="9" />
           </label>
           <label>Separator
             <select id="gen-sep-select">

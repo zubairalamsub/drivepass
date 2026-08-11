@@ -1,0 +1,13 @@
+{
+  "name": "drivepass",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Zero-knowledge password manager whose encrypted vault lives in the user's own Google Drive.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

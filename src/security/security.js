@@ -182,13 +182,28 @@ function entryRow(e, tagText = "", tagBad = false) {
   row.querySelector(".tag").textContent = tagText;
 
   row.querySelector(".gen-fix-btn").addEventListener("click", async () => {
-    if (!confirm('Replace password for ' + (e.name || e.url || 'this entry') + ' with a new 24-char password?')) return;
+    // This only rotates the STORED copy. If the user doesn't also change it on
+    // the site, the vault no longer holds the working password — so say so
+    // before doing it, not after.
+    const label = e.name || e.url || "this entry";
+    if (
+      !confirm(
+        `Generate a new 24-character password for ${label}?\n\n` +
+          `This changes the copy stored in DrivePass and copies it to your ` +
+          `clipboard. You still have to change it on the site itself — until ` +
+          `you do, the site will keep expecting the old one. ` +
+          `(The old password stays in this entry's history.)`
+      )
+    ) {
+      return;
+    }
     const newPass = generatePassword(24, { symbols: true });
     e.password = newPass;
     e.updatedAt = Date.now();
     await send("SAVE_ENTRY", { entry: e });
     navigator.clipboard.writeText(newPass);
-    toast("Generated & copied new 24-char password!");
+    send("SCHEDULE_CLEAR_CLIPBOARD");
+    toast("New password generated, copied, and saved");
     
     // Re-analyze
     const res = await send("GET_ENTRIES");

@@ -94,24 +94,81 @@ export async function decryptJSON(key, ivB64, ctB64) {
 }
 
 // ---- password generator (used by the UI) --------------------------------
-export function generatePassword(length = 20, opts = {}) {
-  const sets = {
-    lower: "abcdefghijkmnpqrstuvwxyz",
-    upper: "ABCDEFGHJKLMNPQRSTUVWXYZ",
-    digits: "23456789",
-    symbols: "!@#$%^&*()-_=+[]{}",
-  };
-  let pool = "";
-  if (opts.lower !== false) pool += sets.lower;
-  if (opts.upper !== false) pool += sets.upper;
-  if (opts.digits !== false) pool += sets.digits;
-  if (opts.symbols) pool += sets.symbols;
-  if (!pool) pool = sets.lower + sets.upper + sets.digits;
 
-  const rnd = crypto.getRandomValues(new Uint32Array(length));
-  let out = "";
-  for (let i = 0; i < length; i++) out += pool[rnd[i] % pool.length];
-  return out;
+// Uniform integer in [0, max). Rejection sampling rather than `% max`: modulo
+// folds the 2^32 output range onto `max` values unevenly, making the first few
+// characters of every alphabet very slightly likelier than the rest. The bias
+// is small but it costs nothing to not have it.
+export function randomInt(max) {
+  const limit = Math.floor(0x100000000 / max) * max;
+  const buf = new Uint32Array(1);
+  let v;
+  do {
+    crypto.getRandomValues(buf);
+    v = buf[0];
+  } while (v >= limit);
+  return v % max;
+}
+
+// Character classes deliberately omit visually ambiguous glyphs (l/I/1, O/0)
+// so a generated password can be read off a screen and retyped correctly.
+const CHAR_SETS = {
+  lower: "abcdefghijkmnpqrstuvwxyz",
+  upper: "ABCDEFGHJKLMNPQRSTUVWXYZ",
+  digits: "23456789",
+  symbols: "!@#$%^&*()-_=+[]{}",
+};
+
+// Which character sets a given options object selects. Shared with the UI so
+// the strength meter is computed from the alphabet actually used — hardcoding
+// 26/26/10/20 there overstates it, since the ambiguous glyphs are excluded.
+// `opts` accepts either short (lower/upper/digits) or long
+// (lowercase/uppercase/numbers) key names — the UI grew the long ones.
+export function activeCharSets(opts = {}) {
+  const want = (short, long, defaultOn) => {
+    const v = opts[short] !== undefined ? opts[short] : opts[long];
+    return v === undefined ? defaultOn : !!v;
+  };
+
+  const active = [];
+  if (want("lower", "lowercase", true)) active.push(CHAR_SETS.lower);
+  if (want("upper", "uppercase", true)) active.push(CHAR_SETS.upper);
+  if (want("digits", "numbers", true)) active.push(CHAR_SETS.digits);
+  if (want("symbols", "symbols", false)) active.push(CHAR_SETS.symbols);
+  if (!active.length) {
+    active.push(CHAR_SETS.lower, CHAR_SETS.upper, CHAR_SETS.digits);
+  }
+  return active;
+}
+
+// Entropy of a password this generator would produce with these settings.
+export function passwordEntropyBits(length, opts = {}) {
+  const poolSize = activeCharSets(opts).join("").length;
+  return length * Math.log2(poolSize);
+}
+
+export function generatePassword(length = 20, opts = {}) {
+  const active = activeCharSets(opts);
+  const pool = active.join("");
+  const draw = () => pool[randomInt(pool.length)];
+
+  // Too short to fit one of each class — just draw from the whole pool.
+  if (length < active.length) {
+    return Array.from({ length }, draw).join("");
+  }
+
+  // Guarantee at least one character from every selected class, otherwise a
+  // "with symbols" password can come out with no symbol in it and get rejected
+  // by the site's own complexity rules.
+  const chars = active.map((set) => set[randomInt(set.length)]);
+  while (chars.length < length) chars.push(draw());
+
+  // Fisher-Yates, so the guaranteed characters aren't always in front.
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
 }
 
 // ---- PIN quick unlock ---------------------------------------------------

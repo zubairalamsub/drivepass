@@ -103,7 +103,7 @@ export function detectAndImportJSON(jsonContent) {
   const list = Array.isArray(parsed) ? parsed : [parsed];
   for (const item of list) {
     if (typeof item !== "object" || !item) continue;
-    const name = item.name || item.title || item.name || "";
+    const name = item.name || item.title || item.login_name || "";
     const url = item.url || item.website || item.uri || "";
     const username = item.username || item.login_username || item.user || "";
     const password = item.password || item.login_password || "";
@@ -182,22 +182,34 @@ export function detectAndImportCSV(csvContent) {
   return imported;
 }
 
+// Excel and Sheets treat a cell starting with = + - @ (or a leading tab/CR) as
+// a formula, so an entry named `=HYPERLINK(...)` becomes executable content in
+// the exported file. Entry names can come from page titles, i.e. from a site,
+// so prefix those cells with a quote to force them to stay text.
+function csvCell(value) {
+  let s = String(value ?? "");
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
 export function exportToCSV(entries) {
   const headers = ["name", "url", "username", "password", "totp", "notes", "type"];
   const rows = [headers.join(",")];
 
   for (const e of entries) {
-    const fields = [
-      e.name || "",
-      e.url || "",
-      e.username || "",
-      e.password || "",
-      e.totp || "",
-      e.notes || "",
-      e.type || "login",
-    ];
-    const escaped = fields.map((f) => `"${String(f).replace(/"/g, '""')}"`);
-    rows.push(escaped.join(","));
+    rows.push(
+      [
+        e.name,
+        e.url,
+        e.username,
+        e.password,
+        e.totp,
+        e.notes,
+        e.type || "login",
+      ]
+        .map(csvCell)
+        .join(",")
+    );
   }
 
   return rows.join("\n");

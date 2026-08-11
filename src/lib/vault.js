@@ -71,14 +71,29 @@ export async function createVaultFile(masterPassword) {
   return { file, key };
 }
 
-// Decrypt a vault file with the master password. Returns { key, data }.
-// Throws if the password is wrong (AES-GCM auth tag fails).
+// The KDF cost lives in cleartext in the file, outside the AEAD, so a tampered
+// or corrupt file can name any number. Below the floor the derived key would be
+// cheap to attack; above the ceiling the derivation would hang the browser.
+export const MIN_ACCEPTED_ITERATIONS = 100000;
+export const MAX_ACCEPTED_ITERATIONS = 10000000;
+
+// Decrypt a vault file with the master password.
+// Returns { key, data, needsKdfUpgrade }. Throws if the password is wrong
+// (AES-GCM auth tag fails).
 export async function openVaultFile(fileObj, masterPassword) {
   if (!fileObj || fileObj.format !== FORMAT) {
     throw new Error("Unrecognized vault file format.");
   }
+  const iterations = Number(fileObj.iterations) || KDF_ITERATIONS;
+  if (
+    !Number.isInteger(iterations) ||
+    iterations < MIN_ACCEPTED_ITERATIONS ||
+    iterations > MAX_ACCEPTED_ITERATIONS
+  ) {
+    throw new Error("This vault file declares an unsafe KDF cost. Refusing to open it.");
+  }
   const salt = b64ToBytes(fileObj.salt);
-  const key = await deriveKey(masterPassword, salt, fileObj.iterations || KDF_ITERATIONS);
+  const key = await deriveKey(masterPassword, salt, iterations);
   let data;
   try {
     data = await decryptJSON(key, fileObj.iv, fileObj.ciphertext);
@@ -86,10 +101,34 @@ export async function openVaultFile(fileObj, masterPassword) {
     throw new Error("Wrong master password or corrupted vault.");
   }
   if (!data || !Array.isArray(data.entries)) data = { entries: [] };
-  return { key, data };
+  return { key, data, needsKdfUpgrade: iterations < KDF_ITERATIONS };
 }
 
-// Re-encrypt vault data with an already-derived key, preserving KDF params.
+// Re-derive the key at the CURRENT cost with a fresh salt, keeping the
+// contents. Raising KDF_ITERATIONS in a release does nothing for vaults that
+// already exist — sealVault has to keep their params, since the in-memory key
+// was derived from them. Migrating requires the master password, so it happens
+// at unlock, which is the one moment we have it.
+export async function rekeyVault(masterPassword, data) {
+  const salt = randomSalt();
+  const key = await deriveKey(masterPassword, salt, KDF_ITERATIONS);
+  const { iv, ciphertext } = await encryptJSON(key, data);
+  return {
+    key,
+    file: {
+      format: FORMAT,
+      kdf: "PBKDF2-SHA256",
+      iterations: KDF_ITERATIONS,
+      salt: bytesToB64(salt),
+      iv,
+      ciphertext,
+    },
+  };
+}
+
+// Re-encrypt vault data with an already-derived key. KDF params MUST carry over
+// unchanged — `key` was derived from this salt and cost, so rewriting them here
+// would produce a file nothing can open. Use rekeyVault to change them.
 export async function sealVault(key, data, prevFileObj) {
   const { iv, ciphertext } = await encryptJSON(key, data);
   return {
@@ -158,19 +197,83 @@ export function purgeAllTrash(data) {
   data.entries = data.entries.filter((e) => !e.deletedAt);
 }
 
+// ---- host matching for autofill -------------------------------------------
+//
+// Deciding which entries an origin may see is a security boundary, not a
+// convenience: offer a credential too broadly and the vault hands a password
+// to a site that did not earn it. Two rules follow from that:
+//
+//   1. Matching is one-directional. An entry saved for the site itself fills
+//      on its subdomains (example.com -> login.example.com), never the reverse
+//      (mail.example.com must not fill on example.com, which may be a
+//      different application entirely).
+//   2. Sharing a public suffix is not sharing a site. a.github.io and
+//      b.github.io are run by different people; neither may see the other's
+//      credentials.
+
+// A compact public-suffix list. The real PSL is ~10k entries and too heavy to
+// embed, so this covers the two cases that actually matter here: hosts that
+// serve arbitrary user content under a shared parent, and the common
+// country-code second-level domains.
+const MULTI_LABEL_SUFFIXES = new Set([
+  // user-content / PaaS hosts
+  "github.io", "githubusercontent.com", "gitlab.io", "codeberg.page",
+  "netlify.app", "vercel.app", "pages.dev", "workers.dev", "onrender.com",
+  "herokuapp.com", "appspot.com", "firebaseapp.com", "web.app", "run.app",
+  "cloudfunctions.net", "azurewebsites.net", "cloudfront.net",
+  "s3.amazonaws.com", "amplifyapp.com", "ondigitalocean.app", "fly.dev",
+  "glitch.me", "repl.co", "replit.app", "surge.sh", "pythonanywhere.com",
+  "readthedocs.io", "js.org", "neocities.org", "blogspot.com",
+  "wordpress.com", "tumblr.com", "myshopify.com", "wixsite.com",
+  "squarespace.com", "weebly.com", "ngrok.io", "ngrok-free.app",
+  // country-code second-level domains
+  "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "net.uk", "sch.uk",
+  "com.au", "net.au", "org.au", "edu.au", "gov.au",
+  "co.nz", "net.nz", "org.nz", "co.za", "co.ke", "com.ng", "com.gh", "com.eg",
+  "co.jp", "ne.jp", "or.jp", "ac.jp", "co.kr", "com.tw", "com.hk", "com.cn",
+  "net.cn", "org.cn", "gov.cn", "com.sg", "com.my", "co.id", "com.ph",
+  "com.vn", "co.th", "co.in", "net.in", "org.in", "com.pk", "com.bd",
+  "com.br", "net.br", "org.br", "gov.br", "com.mx", "com.ar", "com.co",
+  "com.pe", "com.ve", "com.ec", "com.uy", "com.tr", "com.ua", "com.pl",
+  "co.il", "com.sa",
+]);
+
+function normalizeHost(h) {
+  return String(h || "").replace(/^www\./i, "").toLowerCase();
+}
+
+// The registrable domain ("eTLD+1") — the shortest suffix of `host` that a
+// single owner could have registered. login.example.co.uk -> example.co.uk
+function registrableDomain(host) {
+  const parts = host.split(".");
+  if (parts.length <= 2) return host;
+  if (MULTI_LABEL_SUFFIXES.has(parts.slice(-3).join("."))) return parts.slice(-4).join(".");
+  if (MULTI_LABEL_SUFFIXES.has(parts.slice(-2).join("."))) return parts.slice(-3).join(".");
+  return parts.slice(-2).join(".");
+}
+
+// Hostname an entry is scoped to, or null if its URL can't be understood.
+function entryHost(entry) {
+  if (!entry.url) return null;
+  try {
+    const raw = entry.url.includes("://") ? entry.url : "https://" + entry.url;
+    return normalizeHost(new URL(raw).hostname) || null;
+  } catch {
+    return null;
+  }
+}
+
 // Return entries whose URL host matches the given hostname (for autofill).
 export function matchEntriesForHost(data, hostname) {
   if (!hostname) return [];
-  const target = hostname.replace(/^www\./, "").toLowerCase();
+  const target = normalizeHost(hostname);
+  if (!target) return [];
+  const targetSite = registrableDomain(target);
+
   return liveEntries(data).filter((e) => {
-    if (!e.url) return false;
-    let host;
-    try {
-      host = new URL(e.url.includes("://") ? e.url : "https://" + e.url).hostname;
-    } catch {
-      host = e.url;
-    }
-    host = host.replace(/^www\./, "").toLowerCase();
-    return host === target || target.endsWith("." + host) || host.endsWith("." + target);
+    const host = entryHost(e);
+    if (!host) return false;
+    if (host === target) return true;
+    return host === targetSite && target.endsWith("." + host);
   });
 }

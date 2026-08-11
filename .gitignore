@@ -7,6 +7,9 @@
 .idea/
 *.swp
 
+# Dependencies (the test runner is Node's built-in; there are no runtime deps)
+node_modules/
+
 # Build / packaging output
 *.zip
 dist/

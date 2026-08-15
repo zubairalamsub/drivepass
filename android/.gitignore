@@ -1,0 +1,19 @@
+# Gradle's per-machine caches, file hashes and lock files. Never useful to
+# another checkout, and the .lock files cause spurious conflicts.
+.gradle/
+local.properties
+
+# Build output. The root .gitignore's `build/` rule already covers app/build,
+# but be explicit so this project stands on its own if it is ever split out.
+build/
+app/build/
+captures/
+
+# IDE
+.idea/
+*.iml
+
+# Signing material must never be committed.
+*.jks
+*.keystore
+keystore.properties

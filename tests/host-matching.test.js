@@ -53,6 +53,21 @@ test("an entry saved for a bare public suffix matches nothing under it", () => {
   assert.deepEqual(names(vault("com"), "example.com"), []);
 });
 
+test("the bare-public-suffix guard only holds for suffixes on the embedded list", () => {
+  // CURRENT BEHAVIOUR, and the limit of the test above. vault.js ships an
+  // abridged public-suffix list, and registrableDomain() falls back to "last two
+  // labels" for anything not on it. So an entry stored for an *unlisted* suffix
+  // does become a wildcard over everything beneath it — exactly what the listed
+  // cases are guarded against. Documented, not fixed; reported as a defect.
+  for (const suffix of ["com.pt", "com.ug", "co.at", "fastly.net"]) {
+    assert.deepEqual(
+      names(vault(suffix), `bank.${suffix}`),
+      [suffix],
+      `${suffix} is absent from MULTI_LABEL_SUFFIXES, so it still matches as a site`
+    );
+  }
+});
+
 test("country-code second-level domains are treated as suffixes", () => {
   assert.deepEqual(names(vault("example.co.uk"), "login.example.co.uk"), ["example.co.uk"]);
   assert.deepEqual(names(vault("example.co.uk"), "other.co.uk"), []);

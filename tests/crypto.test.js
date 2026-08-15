@@ -13,6 +13,8 @@ import {
   bytesToB64,
   b64ToBytes,
   generatePassword,
+  activeCharSets,
+  passwordEntropyBits,
   KDF_ITERATIONS,
 } from "../src/lib/crypto.js";
 
@@ -149,15 +151,84 @@ test("output is not predictable", () => {
   assert.equal(seen.size, 500);
 });
 
-test("characters are drawn near-uniformly (no modulo bias)", () => {
+// ---- the strength claim ---------------------------------------------------
+// passwordEntropyBits is what the Generator Studio's meter renders. It is only
+// honest if the alphabet it counts is the alphabet the generator really draws
+// from — and this generator deliberately drops the ambiguous glyphs, so any
+// hardcoded 26/26/10/20 anywhere would overstate every password by several bits.
+
+const OPTION_SETS = [
+  {},
+  { symbols: true },
+  { upper: false, digits: false },
+  { uppercase: false, numbers: false, symbols: true },
+  { lower: false, upper: false, digits: false, symbols: false }, // the all-off fallback
+];
+
+test("the alphabet the meter counts is the one the generator actually draws from", () => {
+  for (const opts of OPTION_SETS) {
+    const claimed = new Set(activeCharSets(opts).join(""));
+    // Long enough that every character of the pool is drawn with overwhelming
+    // probability, so a pool the meter knows about but the generator ignores
+    // (or vice versa) shows up as a set difference.
+    const produced = new Set(generatePassword(20000, opts));
+    assert.deepEqual(
+      [...produced].sort(),
+      [...claimed].sort(),
+      `generator and meter disagree on the alphabet for ${JSON.stringify(opts)}`
+    );
+  }
+});
+
+test("entropy is the pool size raised to the length, in bits", () => {
+  for (const opts of OPTION_SETS) {
+    const poolSize = activeCharSets(opts).join("").length;
+    assert.ok(poolSize > 1, `an unusable pool of ${poolSize} for ${JSON.stringify(opts)}`);
+    for (const length of [1, 8, 20, 64]) {
+      assert.equal(passwordEntropyBits(length, opts), length * Math.log2(poolSize));
+    }
+  }
+});
+
+test("switching every class off reports the fallback alphabet's entropy, not zero", () => {
+  // activeCharSets substitutes alnum rather than returning nothing; if the
+  // meter read the empty pool instead it would claim -Infinity or 0 bits for a
+  // password the generator still produces at ~5.8 bits a character.
+  const bits = passwordEntropyBits(16, { lower: false, upper: false, digits: false, symbols: false });
+  assert.ok(Number.isFinite(bits) && bits > 0, `entropy came out as ${bits}`);
+  assert.equal(bits, passwordEntropyBits(16, { symbols: false }));
+});
+
+test("adding symbols raises the claimed entropy, and dropping a class lowers it", () => {
+  assert.ok(passwordEntropyBits(20, { symbols: true }) > passwordEntropyBits(20));
+  assert.ok(passwordEntropyBits(20, { digits: false }) < passwordEntropyBits(20));
+});
+
+test("characters are drawn near-uniformly across the whole pool", () => {
+  // The tolerance is derived from the binomial spread rather than hardcoded: at
+  // N=200000 over 56 characters the natural run-to-run deviation reaches ~6%, so
+  // the old flat 6% bound failed a few runs in a hundred on correct code. Six
+  // sigma puts a false alarm out of reach while still catching the bugs this can
+  // actually see — a character the generator never emits, an off-by-one that
+  // clips the end of the pool, or a draw skewed toward one class.
+  //
+  // It cannot see modulo bias: randomInt's rejection sampling removes a skew of
+  // about one part in 10^8, which no sample of this size could resolve. That
+  // property is structural, and lives in randomInt itself.
   const pool = LOWER + UPPER + DIGITS;
   const N = 200000;
   const counts = new Map();
   for (const c of generatePassword(N)) counts.set(c, (counts.get(c) || 0) + 1);
   assert.equal(counts.size, pool.length, "some pool characters never appeared");
-  const expected = N / pool.length;
+
+  const p = 1 / pool.length;
+  const expected = N * p;
+  const tolerance = (6 * Math.sqrt(N * p * (1 - p))) / expected;
   for (const c of pool) {
     const dev = Math.abs(counts.get(c) - expected) / expected;
-    assert.ok(dev < 0.06, `'${c}' deviates ${(dev * 100).toFixed(1)}% from uniform`);
+    assert.ok(
+      dev < tolerance,
+      `'${c}' deviates ${(dev * 100).toFixed(1)}% from uniform, past the ${(tolerance * 100).toFixed(1)}% bound`
+    );
   }
 });

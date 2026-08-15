@@ -105,12 +105,24 @@ class VaultConflictError extends Error {
   }
 }
 
+// The file we were syncing to is gone from Drive and no replacement was found
+// by name. Distinct from a conflict, and equally not an auth problem.
+class VaultMissingError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "VaultMissing";
+  }
+}
+
+// Errors that mean "stop, this will not succeed on retry" — as opposed to a
+// stale token, which a fresh interactive grant would fix.
+const isTerminalSyncError = (e) => e?.name === "VaultConflict" || e?.name === "VaultMissing";
+
 // Fold any changes another device made into `vaultData` before we overwrite
 // the Drive copy. Without this, a plain PATCH silently drops whatever the
 // other device wrote since our last sync. Returns true if a merge happened.
-async function mergeRemoteIfChanged(fileId, knownModifiedTime) {
-  const meta = await getFileMeta(fileId);
-  if (!meta) return false; // file is gone; the push below will recreate it
+async function mergeRemoteIfChanged(fileId, knownModifiedTime, meta) {
+  if (!meta) return false;
   if (knownModifiedTime && meta.modifiedTime === knownModifiedTime) return false;
 
   const remoteFile = await downloadVaultFile(fileId);
@@ -145,13 +157,43 @@ async function persistVault() {
       "cache_fileId",
       "cache_modifiedTime",
     ]);
+    let meta = null;
+    // A file we just located by name has never been reconciled against this
+    // device's copy, so its modifiedTime tells us nothing and we must merge
+    // rather than assume our copy is newer.
+    let freshlyDiscovered = false;
     if (!cache_fileId) {
       const found = await findVaultFile(FILE_NAME);
       cache_fileId = found?.id;
       cache_modifiedTime = found?.modifiedTime;
+      freshlyDiscovered = !!cache_fileId;
+      if (cache_fileId) meta = await getFileMeta(cache_fileId);
+    } else {
+      // Confirm the id still resolves BEFORE patching it. A cached id can go
+      // stale when the file is deleted or the per-file grant is withdrawn, and
+      // PATCHing a dead id 404s on every future save with no way to recover.
+      meta = await getFileMeta(cache_fileId);
+      if (!meta) {
+        await chrome.storage.local.remove(["cache_fileId", "cache_modifiedTime"]);
+        const found = await findVaultFile(FILE_NAME);
+        if (!found) {
+          // Deliberately NOT creating one here: if the grant was merely lost,
+          // creating would fork the vault into two files that then take turns
+          // overwriting each other. Better to stop and say so.
+          throw new VaultMissingError(
+            "The vault file is no longer in your Google Drive. Reconnect Drive, " +
+              "or restore vault.enc, to resume syncing."
+          );
+        }
+        cache_fileId = found.id;
+        cache_modifiedTime = found.modifiedTime;
+        freshlyDiscovered = true;
+        meta = await getFileMeta(cache_fileId);
+      }
     }
 
-    if (cache_fileId && (await mergeRemoteIfChanged(cache_fileId, cache_modifiedTime))) {
+    const since = freshlyDiscovered ? null : cache_modifiedTime;
+    if (cache_fileId && (await mergeRemoteIfChanged(cache_fileId, since, meta))) {
       // The merge changed our in-memory vault — re-seal so we push the union.
       cachedFileObj = await sealVault(sessionKey, vaultData, cachedFileObj);
       await chrome.storage.local.set({ cache_file: cachedFileObj });
@@ -172,15 +214,14 @@ async function persistVault() {
     await getToken(false);
     return await pushToDrive();
   } catch (e) {
-    // A conflict is not an auth problem — re-prompting for consent would just
-    // throw a Google window at the user and fail the same way.
-    if (e?.name === "VaultConflict") return { synced: false, error: e.message };
+    // A conflict or a missing file is not an auth problem — re-prompting for
+    // consent would just throw a Google window at the user and fail the same way.
+    if (isTerminalSyncError(e)) return { synced: false, error: e.message };
     // If token expired or first attempt failed, retry once with a fresh token
     try {
       await getToken(true);
       return await pushToDrive();
     } catch (retryErr) {
-      if (retryErr?.name === "VaultConflict") return { synced: false, error: retryErr.message };
       return { synced: false, error: retryErr.message };
     }
   }

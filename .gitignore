@@ -7,6 +7,9 @@
 .idea/
 *.swp
 
+# Per-machine Claude Code settings (tool permissions etc.)
+.claude/settings.local.json
+
 # Dependencies (the test runner is Node's built-in; there are no runtime deps)
 node_modules/
 

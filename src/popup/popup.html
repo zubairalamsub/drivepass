@@ -7,246 +7,346 @@
     <title>DrivePass</title>
   </head>
   <body>
-    <header class="topbar">
+    <!-- Icon sprite. Source of truth is src/lib/icons.js; tests/icons.test.js
+         fails if the two drift. Inlined rather than injected so icons are
+         present on the first paint. -->
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+      <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="8" r="4.25"/><path d="M11 11l8.5 8.5M16 16l2.25-2.25M18.5 18.5L21 16"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></symbol>
+      <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 7.7-1.5"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5.5c0 4.4-3 8.2-7 9.5-4-1.3-7-5.1-7-9.5V6z"/><path d="M9 12l2.2 2.2L15.5 10"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5v.2a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></symbol>
+      <symbol id="i-vault" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="11" cy="12" r="3.5"/><path d="M11 8.5v-1M11 16.5v1M18 9.5v5"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/></symbol>
+      <symbol id="i-dice" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3.5"/><circle cx="9" cy="9" r="1.15" class="dot"/><circle cx="15" cy="15" r="1.15" class="dot"/><circle cx="15" cy="9" r="1.15" class="dot"/><circle cx="9" cy="15" r="1.15" class="dot"/></symbol>
+      <symbol id="i-card" viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19M6 15h3"/></symbol>
+      <symbol id="i-note" viewBox="0 0 24 24"><path d="M6 3.5h8.5L19 8v12.5H6z"/><path d="M14 3.5V8h5M9 12.5h6M9 16h4"/></symbol>
+      <symbol id="i-passkey" viewBox="0 0 24 24"><circle cx="9.5" cy="8" r="3.75"/><path d="M3.5 20c0-3.3 2.7-5.5 6-5.5 1 0 2 .2 2.8.6"/><path d="M15.5 15.5h5.5M18 13v5"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8L20.5 20.5"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="12" height="12" rx="2.5"/><path d="M15.5 8.5v-3a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+      <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.75l2.6 5.28 5.83.85-4.22 4.11 1 5.81L12 17.05l-5.21 2.75 1-5.81-4.22-4.11 5.83-.85z"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M9.9 5.8A9.6 9.6 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-3.3 4.1M6.3 7.9A17 17 0 0 0 2.5 12S6 18.5 12 18.5c1.3 0 2.4-.3 3.4-.7"/><path d="M10 10a2.8 2.8 0 0 0 4 4M3.5 3.5l17 17"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v4.5h-4.5"/></symbol>
+      <symbol id="i-cloud-ok" viewBox="0 0 24 24"><path d="M7 18.5a4.25 4.25 0 0 1-.4-8.48 5.5 5.5 0 0 1 10.6-1.4A4.25 4.25 0 0 1 17.5 18.5z"/><path d="M9.5 14l2 2 3.5-3.8"/></symbol>
+      <symbol id="i-cloud-off" viewBox="0 0 24 24"><path d="M7 18.5a4.25 4.25 0 0 1-.4-8.48 5.5 5.5 0 0 1 10.6-1.4A4.25 4.25 0 0 1 17.5 18.5z"/><path d="M3.5 3.5l17 17"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V5.5a1.5 1.5 0 0 1 1.5-1.5h2a1.5 1.5 0 0 1 1.5 1.5V7"/><path d="M6.5 7l.8 12a1.5 1.5 0 0 0 1.5 1.4h6.4a1.5 1.5 0 0 0 1.5-1.4l.8-12"/></symbol>
+      <symbol id="i-camera" viewBox="0 0 24 24"><path d="M3.5 8.5h3L8 6h8l1.5 2.5h3v11h-17z"/><circle cx="12" cy="13.5" r="3.5"/></symbol>
+      <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.75"/><path d="M4 17l4.5-4.5 3.5 3.5 3-2.5 5 4.5"/></symbol>
+      <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20.5 12.5c0 3.9-3.8 7-8.5 7-1 0-2-.15-2.9-.42L4 20.5l1.5-3.6A6.7 6.7 0 0 1 3.5 12.5c0-3.9 3.8-7 8.5-7s8.5 3.1 8.5 7z"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M14.5 5.5L8 12l6.5 6.5"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M8.5 5.5L15 12l-6.5 6.5"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.75v5M12 16.1v.05"/></symbol>
+    </svg>
+
+    <header class="appbar">
       <div class="brand">
-        <span class="logo">🔑</span><strong>DrivePass</strong>
+        <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-key"></use></svg></span>
+        <strong>DrivePass</strong>
       </div>
-      <div class="topbar-actions">
+      <div class="appbar-actions">
         <span id="sync-badge" class="badge" title="Sync status"></span>
-        <button id="auth-btn" class="icon-btn" title="Authenticator (2FA codes)">🔐</button>
-        <button id="gen-studio-btn" class="icon-btn" title="Password Generator Studio">🎲</button>
-        <button id="lock-btn" class="icon-btn" title="Lock vault" hidden>🔒</button>
-        <button id="security-btn" class="icon-btn" title="Security Center">🛡️</button>
-        <button id="settings-btn" class="icon-btn" title="Settings">⚙️</button>
+        <button id="lock-btn" class="icon-btn" title="Lock vault" aria-label="Lock vault" hidden>
+          <svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>
+        </button>
+        <button id="settings-btn" class="icon-btn" title="Settings" aria-label="Settings">
+          <svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>
+        </button>
       </div>
     </header>
 
     <main id="view-root">
       <!-- Loading -->
       <section id="view-loading" class="view">
-        <p class="muted center">Loading…</p>
+        <div class="skeleton-list" aria-busy="true" aria-label="Loading vault">
+          <div class="skel-row"></div>
+          <div class="skel-row"></div>
+          <div class="skel-row"></div>
+          <div class="skel-row"></div>
+        </div>
       </section>
 
       <!-- Create vault -->
       <section id="view-create" class="view" hidden>
-        <h2>Create your vault</h2>
-        <p class="muted">
-          Choose a master password. It encrypts everything and is never stored or
-          uploaded. <strong>If you forget it, your data cannot be recovered.</strong>
-        </p>
-        <label>Master password
-          <div class="input-wrapper">
-            <input id="create-pw" type="password" autocomplete="new-password" />
-            <button class="pw-toggle" title="Toggle password visibility">👁️</button>
-          </div>
-        </label>
+        <div class="hero">
+          <span class="hero-mark"><svg class="icon" aria-hidden="true"><use href="#i-vault"></use></svg></span>
+          <h2>Create your vault</h2>
+          <p class="muted">
+            Your master password encrypts everything. It is never stored or uploaded.
+          </p>
+        </div>
+
+        <div class="callout danger">
+          <svg class="icon" aria-hidden="true"><use href="#i-alert"></use></svg>
+          <span>If you forget it, your data cannot be recovered — by us or by anyone.</span>
+        </div>
+
+        <label for="create-pw">Master password</label>
+        <div class="input-wrapper">
+          <input id="create-pw" type="password" autocomplete="new-password" />
+          <button class="pw-toggle" type="button" title="Show password" aria-label="Show password">
+            <svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg>
+          </button>
+        </div>
         <div id="pw-strength" class="strength-meter" hidden>
           <div class="strength-bar"><div id="pw-strength-fill" class="strength-fill"></div></div>
           <span id="pw-strength-label" class="strength-label"></span>
         </div>
-        <label>Confirm master password
-          <div class="input-wrapper">
-            <input id="create-pw2" type="password" autocomplete="new-password" />
-            <button class="pw-toggle" title="Toggle password visibility">👁️</button>
-          </div>
-        </label>
+
+        <label for="create-pw2">Confirm master password</label>
+        <div class="input-wrapper">
+          <input id="create-pw2" type="password" autocomplete="new-password" />
+          <button class="pw-toggle" type="button" title="Show password" aria-label="Show password">
+            <svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg>
+          </button>
+        </div>
+
         <p id="create-err" class="error" hidden></p>
-        <button id="create-btn" class="primary">Create vault</button>
+        <button id="create-btn" class="primary block">Create vault</button>
       </section>
 
       <!-- Unlock -->
       <section id="view-unlock" class="view" hidden>
-        <h2>Unlock vault</h2>
-        <div id="pin-unlock-box" class="pin-box" hidden>
-          <label>PIN Quick Access
-            <div class="input-wrapper">
-              <input id="unlock-pin" type="password" inputmode="numeric" maxlength="12" placeholder="••••••" autocomplete="off" />
-              <button class="pw-toggle" title="Toggle password visibility">👁️</button>
-            </div>
-          </label>
-          <button id="unlock-pin-btn" class="primary">Unlock with PIN</button>
-          <div class="divider"><span>or use Master Password</span></div>
+        <div class="hero">
+          <span class="hero-mark"><svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg></span>
+          <h2>Vault locked</h2>
         </div>
 
-        <label>Master password
+        <div id="pin-unlock-box" class="pin-box" hidden>
+          <label for="unlock-pin">PIN quick access</label>
           <div class="input-wrapper">
-            <input id="unlock-pw" type="password" autocomplete="current-password" />
-            <button class="pw-toggle" title="Toggle password visibility">👁️</button>
+            <input id="unlock-pin" type="password" inputmode="numeric" maxlength="12" placeholder="••••••" autocomplete="off" />
+            <button class="pw-toggle" type="button" title="Show PIN" aria-label="Show PIN">
+              <svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg>
+            </button>
           </div>
-        </label>
+          <button id="unlock-pin-btn" class="primary block">Unlock with PIN</button>
+          <div class="divider"><span>or master password</span></div>
+        </div>
+
+        <label for="unlock-pw">Master password</label>
+        <div class="input-wrapper">
+          <input id="unlock-pw" type="password" autocomplete="current-password" />
+          <button class="pw-toggle" type="button" title="Show password" aria-label="Show password">
+            <svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg>
+          </button>
+        </div>
         <p id="unlock-err" class="error" hidden></p>
-        <button id="unlock-btn" class="primary">Unlock</button>
+        <button id="unlock-btn" class="primary block">Unlock</button>
       </section>
 
       <!-- Vault list -->
       <section id="view-list" class="view" hidden>
-        <div class="list-toolbar">
-          <input id="search" type="search" placeholder="Search…" />
-          <button id="add-btn" class="primary small">+ Add</button>
+        <div class="toolbar">
+          <div class="search-field">
+            <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
+            <input id="search" type="search" placeholder="Search vault" aria-label="Search vault" />
+          </div>
+          <button id="add-btn" class="primary compact" title="Add item">
+            <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+            <span>Add</span>
+          </button>
         </div>
-        <div class="type-filter">
-          <button class="filter-btn active" data-type="all">All</button>
-          <button class="filter-btn" data-type="login">🔑 Logins</button>
-          <button class="filter-btn" data-type="card">💳 Cards</button>
-          <button class="filter-btn" data-type="note">📝 Notes</button>
-          <button class="filter-btn" data-type="passkey">🔑 Passkeys</button>
-        </div>
-        <div class="list-toolbar" style="margin-bottom: 8px;">
-          <select id="sort-select" style="margin-top:0; flex:1; font-size:12px; padding:6px 8px;">
-            <option value="name">Sort: A-Z</option>
-            <option value="name-desc">Sort: Z-A</option>
-            <option value="recent">Sort: Recently Updated</option>
-            <option value="oldest">Sort: Oldest First</option>
+
+        <div class="filter-row">
+          <div class="chips" role="tablist" aria-label="Filter by type">
+            <button class="chip active" data-type="all" role="tab" aria-selected="true">All</button>
+            <button class="chip" data-type="login" role="tab" aria-selected="false">
+              <svg class="icon" aria-hidden="true"><use href="#i-key"></use></svg><span>Logins</span>
+            </button>
+            <button class="chip" data-type="card" role="tab" aria-selected="false">
+              <svg class="icon" aria-hidden="true"><use href="#i-card"></use></svg><span>Cards</span>
+            </button>
+            <button class="chip" data-type="note" role="tab" aria-selected="false">
+              <svg class="icon" aria-hidden="true"><use href="#i-note"></use></svg><span>Notes</span>
+            </button>
+            <button class="chip" data-type="passkey" role="tab" aria-selected="false">
+              <svg class="icon" aria-hidden="true"><use href="#i-passkey"></use></svg><span>Passkeys</span>
+            </button>
+          </div>
+          <select id="sort-select" class="sort-select" aria-label="Sort entries">
+            <option value="name">A–Z</option>
+            <option value="name-desc">Z–A</option>
+            <option value="recent">Newest</option>
+            <option value="oldest">Oldest</option>
           </select>
         </div>
+
         <ul id="entry-list" class="entry-list"></ul>
+
         <div id="empty-msg" class="empty-state" hidden>
-          <div class="empty-icon">🔐</div>
+          <span class="empty-mark"><svg class="icon" aria-hidden="true"><use href="#i-vault"></use></svg></span>
           <h3>Your vault is empty</h3>
-          <p class="muted">Add your first login, credit card, or secure note to get started.</p>
-          <button id="empty-add-btn" class="primary small">+ Add your first item</button>
+          <p class="muted">Add a login, card, or secure note to get started.</p>
+          <button id="empty-add-btn" class="primary compact">
+            <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+            <span>Add your first item</span>
+          </button>
         </div>
       </section>
 
       <!-- Add / edit entry -->
       <section id="view-edit" class="view" hidden>
-        <h2 id="edit-title">Add item</h2>
-        
-        <label>Item Type
-          <select id="f-type">
-            <option value="login">🔑 Login</option>
-            <option value="card">💳 Credit Card</option>
-            <option value="note">📝 Secure Note</option>
-            <option value="passkey">🔑 Passkey Metadata</option>
-          </select>
-        </label>
+        <div class="view-head">
+          <button id="cancel-btn" class="icon-btn" title="Back" aria-label="Back">
+            <svg class="icon" aria-hidden="true"><use href="#i-back"></use></svg>
+          </button>
+          <h2 id="edit-title">Add item</h2>
+          <button id="delete-btn" class="icon-btn danger-ghost" title="Delete item" aria-label="Delete item" hidden>
+            <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>
+          </button>
+        </div>
 
-        <label>Name / Title
-          <input id="f-name" type="text" placeholder="e.g. GitHub" />
-        </label>
+        <label for="f-type">Item type</label>
+        <select id="f-type">
+          <option value="login">Login</option>
+          <option value="card">Credit card</option>
+          <option value="note">Secure note</option>
+          <option value="passkey">Passkey metadata</option>
+        </select>
+
+        <label for="f-name">Name</label>
+        <input id="f-name" type="text" placeholder="e.g. GitHub" />
 
         <!-- Login fields -->
         <div id="fields-login">
-          <label>Website
-            <input id="f-url" type="text" placeholder="github.com" />
-          </label>
-          <label>Username / email
-            <input id="f-username" type="text" autocomplete="off" />
-          </label>
-          <label>Password / Passphrase
-            <span class="pw-row">
-              <div class="input-wrapper" style="flex:1;">
-                <input id="f-password" type="password" autocomplete="off" />
-                <button class="pw-toggle" title="Toggle password visibility">👁️</button>
-              </div>
-              <button id="gen-btn" class="icon-btn" title="Random password">🎲</button>
-              <button id="gen-phrase-btn" class="icon-btn" title="Memorable passphrase">💬</button>
-            </span>
-          </label>
+          <label for="f-url">Website</label>
+          <input id="f-url" type="text" placeholder="github.com" />
 
-          <div id="totp-preview" class="totp-box" hidden>
-            <div class="totp-meta">
-              <span class="lbl">2FA Code</span>
+          <label for="f-username">Username / email</label>
+          <input id="f-username" type="text" autocomplete="off" />
+
+          <label for="f-password">Password</label>
+          <div class="pw-row">
+            <div class="input-wrapper">
+              <input id="f-password" type="password" autocomplete="off" />
+              <button class="pw-toggle" type="button" title="Show password" aria-label="Show password">
+                <svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg>
+              </button>
+            </div>
+            <button id="gen-btn" class="icon-btn bordered" title="Generate random password" aria-label="Generate random password">
+              <svg class="icon" aria-hidden="true"><use href="#i-dice"></use></svg>
+            </button>
+            <button id="gen-phrase-btn" class="icon-btn bordered" title="Generate passphrase" aria-label="Generate passphrase">
+              <svg class="icon" aria-hidden="true"><use href="#i-chat"></use></svg>
+            </button>
+          </div>
+
+          <div id="totp-preview" class="code-card" hidden>
+            <div class="code-card-head">
+              <span class="lbl">
+                <svg class="icon" aria-hidden="true"><use href="#i-clock"></use></svg>
+                2FA code
+              </span>
               <span id="totp-timer" class="timer">30s</span>
             </div>
-            <div class="totp-code-row">
+            <div class="code-card-body">
               <span id="totp-code" class="code">------</span>
-              <button id="copy-totp-btn" class="copy small">Copy TOTP</button>
+              <button id="copy-totp-btn" class="copy" title="Copy code">
+                <svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg>
+                <span>Copy</span>
+              </button>
             </div>
           </div>
 
-          <label>2FA Secret / TOTP Key
-            <input id="f-totp" type="text" placeholder="Base32 key or otpauth:// URI" autocomplete="off" />
-          </label>
+          <label for="f-totp">2FA secret</label>
+          <input id="f-totp" type="text" placeholder="Base32 key or otpauth:// URI" autocomplete="off" />
         </div>
 
         <!-- Card fields -->
         <div id="fields-card" hidden>
-          <label>Cardholder Name
-            <input id="f-card-holder" type="text" placeholder="John Doe" />
-          </label>
-          <label>Card Number
-            <input id="f-card-number" type="text" placeholder="4532 •••• •••• 8899" autocomplete="off" />
-          </label>
+          <label for="f-card-holder">Cardholder name</label>
+          <input id="f-card-holder" type="text" placeholder="Jane Doe" />
+
+          <label for="f-card-number">Card number</label>
+          <input id="f-card-number" type="text" placeholder="4532 •••• •••• 8899" autocomplete="off" />
+
           <div class="field-row">
-            <label>Expiry
-              <input id="f-card-exp" type="text" placeholder="MM/YY" style="width:90px;" />
-            </label>
-            <label>CVV / Security Code
-              <input id="f-card-cvv" type="text" placeholder="123" style="width:80px;" autocomplete="off" />
-            </label>
+            <div class="field-col">
+              <label for="f-card-exp">Expiry</label>
+              <input id="f-card-exp" type="text" placeholder="MM/YY" />
+            </div>
+            <div class="field-col">
+              <label for="f-card-cvv">CVV</label>
+              <input id="f-card-cvv" type="text" placeholder="123" autocomplete="off" />
+            </div>
           </div>
         </div>
 
         <!-- Passkey fields -->
         <div id="fields-passkey" hidden>
-          <label>Relying Party (Domain)
-            <input id="f-passkey-rpid" type="text" placeholder="github.com" />
-          </label>
-          <label>Passkey User Account
-            <input id="f-passkey-user" type="text" placeholder="user@domain.com" />
-          </label>
-          <label>Credential ID (Base64)
-            <input id="f-passkey-credid" type="text" placeholder="A1B2C3D4..." />
-          </label>
+          <label for="f-passkey-rpid">Relying party (domain)</label>
+          <input id="f-passkey-rpid" type="text" placeholder="github.com" />
+
+          <label for="f-passkey-user">Passkey user account</label>
+          <input id="f-passkey-user" type="text" placeholder="user@domain.com" />
+
+          <label for="f-passkey-credid">Credential ID (Base64)</label>
+          <input id="f-passkey-credid" type="text" placeholder="A1B2C3D4…" />
         </div>
 
-        <label>Notes
-          <textarea id="f-notes" rows="2"></textarea>
-        </label>
+        <label for="f-notes">Notes</label>
+        <textarea id="f-notes" rows="3"></textarea>
 
         <!-- Password history -->
         <div id="history-box" class="history-box" hidden>
-          <label>Password Revision History</label>
+          <label>Password history</label>
           <ul id="history-list" class="history-list"></ul>
         </div>
 
         <p id="edit-err" class="error" hidden></p>
-        <div class="btn-row">
-          <button id="save-btn" class="primary">Save</button>
-          <button id="cancel-btn" class="ghost">Cancel</button>
-          <button id="delete-btn" class="danger" hidden>Delete</button>
+        <div class="form-actions">
+          <button id="save-btn" class="primary block">Save</button>
         </div>
       </section>
 
-      <!-- Generator Studio -->
+      <!-- Generator -->
       <section id="view-generator" class="view" hidden>
-        <h2>Password Generator</h2>
-        
-        <div class="totp-box" style="margin-bottom:14px; border-color:var(--accent);">
-          <div class="totp-meta">
-            <span id="gen-strength-label" class="lbl" style="color:var(--ok); font-weight:700;">Strong</span>
-            <span id="gen-entropy-label" class="timer" style="color:var(--muted);">96 bits</span>
-          </div>
-          <div class="totp-code-row">
-            <span id="gen-output" class="code" style="font-size:16px; word-break:break-all;">-</span>
-            <button id="gen-copy-btn" class="copy small">Copy</button>
+        <div class="view-head">
+          <h2>Generator</h2>
+        </div>
+
+        <div class="gen-output-card">
+          <output id="gen-output" class="gen-output">-</output>
+          <div class="gen-output-foot">
+            <span id="gen-strength-label" class="strength-label">Strong</span>
+            <span id="gen-entropy-label" class="entropy">96 bits</span>
+            <div class="spacer"></div>
+            <button id="gen-refresh-btn" class="icon-btn bordered" title="Re-generate" aria-label="Re-generate">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>
+            </button>
+            <button id="gen-copy-btn" class="primary compact" title="Copy">
+              <svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg>
+              <span>Copy</span>
+            </button>
           </div>
         </div>
 
-        <div class="type-filter">
-          <button id="gen-mode-random" class="filter-btn active">🎲 Random</button>
-          <button id="gen-mode-passphrase" class="filter-btn">💬 Passphrase</button>
+        <div class="segmented" role="tablist" aria-label="Generator mode">
+          <button id="gen-mode-random" class="seg active" role="tab" aria-selected="true">
+            <svg class="icon" aria-hidden="true"><use href="#i-dice"></use></svg><span>Random</span>
+          </button>
+          <button id="gen-mode-passphrase" class="seg" role="tab" aria-selected="false">
+            <svg class="icon" aria-hidden="true"><use href="#i-chat"></use></svg><span>Passphrase</span>
+          </button>
         </div>
 
         <!-- Random mode controls -->
         <div id="gen-ctrl-random">
-          <label>Length: <span id="gen-len-val">20</span>
-            <input id="gen-len-slider" type="range" min="8" max="64" value="20" />
-          </label>
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; font-size:13px;">
-            <label style="margin:0; text-transform:none; font-weight:500;">
-              <input id="gen-opt-upper" type="checkbox" checked /> A-Z Uppercase
-            </label>
-            <label style="margin:0; text-transform:none; font-weight:500;">
-              <input id="gen-opt-lower" type="checkbox" checked /> a-z Lowercase
-            </label>
-            <label style="margin:0; text-transform:none; font-weight:500;">
-              <input id="gen-opt-nums" type="checkbox" checked /> 0-9 Numbers
-            </label>
-            <label style="margin:0; text-transform:none; font-weight:500;">
-              <input id="gen-opt-syms" type="checkbox" checked /> !@# Symbols
-            </label>
+          <div class="slider-row">
+            <label for="gen-len-slider">Length</label>
+            <output id="gen-len-val" class="slider-val">20</output>
+          </div>
+          <input id="gen-len-slider" type="range" min="8" max="64" value="20" />
+
+          <div class="check-grid">
+            <label class="check"><input id="gen-opt-upper" type="checkbox" checked /><span>A–Z</span></label>
+            <label class="check"><input id="gen-opt-lower" type="checkbox" checked /><span>a–z</span></label>
+            <label class="check"><input id="gen-opt-nums" type="checkbox" checked /><span>0–9</span></label>
+            <label class="check"><input id="gen-opt-syms" type="checkbox" checked /><span>!@#</span></label>
           </div>
         </div>
 
@@ -255,66 +355,89 @@
           <!-- This wordlist carries ~6.6 bits per word, so the old 3-7 range
                topped out around 53 bits. The ceiling is raised so a passphrase
                can actually reach a defensible strength. -->
-          <label>Words: <span id="gen-words-val">9</span>
-            <input id="gen-words-slider" type="range" min="4" max="14" value="9" />
-          </label>
-          <label>Separator
-            <select id="gen-sep-select">
-              <option value="-">Hyphen (-)</option>
-              <option value="_">Underscore (_)</option>
-              <option value=".">Period (.)</option>
-              <option value=" ">Space ( )</option>
-            </select>
-          </label>
-        </div>
+          <div class="slider-row">
+            <label for="gen-words-slider">Words</label>
+            <output id="gen-words-val" class="slider-val">9</output>
+          </div>
+          <input id="gen-words-slider" type="range" min="4" max="14" value="9" />
 
-        <div class="btn-row" style="margin-top:16px;">
-          <button id="gen-refresh-btn" class="primary">Re-generate 🔄</button>
-          <button id="gen-back-btn" class="ghost">Back to Vault</button>
+          <label for="gen-sep-select">Separator</label>
+          <select id="gen-sep-select">
+            <option value="-">Hyphen ( - )</option>
+            <option value="_">Underscore ( _ )</option>
+            <option value=".">Period ( . )</option>
+            <option value=" ">Space (   )</option>
+          </select>
         </div>
       </section>
 
       <!-- Authenticator (2FA codes) -->
       <section id="view-auth" class="view" hidden>
-        <div class="auth-header">
-          <h2>🔐 Authenticator</h2>
-          <button id="auth-add-toggle" class="primary small">+ Add account</button>
+        <div class="view-head">
+          <h2>Authenticator</h2>
+          <button id="auth-add-toggle" class="primary compact">
+            <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+            <span>Add</span>
+          </button>
         </div>
 
-        <!-- Add account panel -->
-        <div id="auth-add-panel" class="auth-add-panel" hidden>
-          <label>Setup key or otpauth:// URI
-            <input id="auth-secret" type="text" placeholder="JBSWY3DP… or otpauth://totp/…" autocomplete="off" />
-          </label>
+        <div id="auth-add-panel" class="panel" hidden>
+          <label for="auth-secret">Setup key or otpauth:// URI</label>
+          <input id="auth-secret" type="text" placeholder="JBSWY3DP… or otpauth://totp/…" autocomplete="off" />
+
           <div class="field-row">
-            <label>Issuer / Service
+            <div class="field-col">
+              <label for="auth-issuer">Issuer</label>
               <input id="auth-issuer" type="text" placeholder="GitHub" />
-            </label>
-            <label>Account
+            </div>
+            <div class="field-col">
+              <label for="auth-account">Account</label>
               <input id="auth-account" type="text" placeholder="you@example.com" />
-            </label>
+            </div>
           </div>
+
           <p id="auth-add-err" class="error" hidden></p>
           <div class="btn-row">
-            <button id="auth-save-btn" class="primary small">Save account</button>
-            <button id="auth-upload-btn" class="ghost small">🖼️ Upload QR</button>
-            <button id="auth-scan-btn" class="ghost small">📷 Scan camera</button>
+            <button id="auth-save-btn" class="primary compact">Save</button>
+            <button id="auth-upload-btn" class="ghost compact">
+              <svg class="icon" aria-hidden="true"><use href="#i-image"></use></svg><span>Upload QR</span>
+            </button>
+            <button id="auth-scan-btn" class="ghost compact">
+              <svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg><span>Scan</span>
+            </button>
           </div>
           <input id="auth-qr-file" type="file" accept="image/*" hidden />
         </div>
 
         <ul id="auth-list" class="auth-list"></ul>
         <div id="auth-empty" class="empty-state" hidden>
-          <div class="empty-icon">🔐</div>
+          <span class="empty-mark"><svg class="icon" aria-hidden="true"><use href="#i-clock"></use></svg></span>
           <h3>No 2FA accounts yet</h3>
-          <p class="muted">Add an account to see live 6-digit codes here. Any login with a 2FA secret shows up automatically.</p>
-        </div>
-
-        <div class="btn-row" style="margin-top:14px;">
-          <button id="auth-back-btn" class="ghost">Back to Vault</button>
+          <p class="muted">Add an account to see live codes. Any login with a 2FA secret appears here automatically.</p>
         </div>
       </section>
     </main>
+
+    <!-- Primary navigation. Replaces the header icon row and the per-screen
+         "Back to Vault" buttons: every destination is one tap from anywhere. -->
+    <nav id="tabbar" class="tabbar" aria-label="Main" hidden>
+      <button class="tab active" data-nav="list" aria-current="page">
+        <svg class="icon" aria-hidden="true"><use href="#i-vault"></use></svg>
+        <span>Vault</span>
+      </button>
+      <button class="tab" data-nav="auth">
+        <svg class="icon" aria-hidden="true"><use href="#i-clock"></use></svg>
+        <span>2FA</span>
+      </button>
+      <button class="tab" data-nav="generator">
+        <svg class="icon" aria-hidden="true"><use href="#i-dice"></use></svg>
+        <span>Generate</span>
+      </button>
+      <button id="security-btn" class="tab" data-nav="security">
+        <svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg>
+        <span>Security</span>
+      </button>
+    </nav>
 
     <script src="../vendor/jsQR.js"></script>
     <script type="module" src="popup.js"></script>

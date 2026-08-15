@@ -38,7 +38,15 @@ async function refresh() {
   if ($("theme-select")) $("theme-select").value = savedTheme;
 
   if (st.connected) {
-    $("drive-state").innerHTML = `Connected as <span class="pill">${st.email || "Google account"}</span>`;
+    // Built as nodes rather than interpolated into innerHTML — the email comes
+    // from an API response, and this is the only place a value reached the DOM
+    // as markup.
+    const pill = document.createElement("span");
+    pill.className = "pill";
+    pill.textContent = st.email || "Google account";
+    const state = $("drive-state");
+    state.textContent = "Connected as ";
+    state.appendChild(pill);
     $("connect-btn").hidden = true;
     $("sync-btn").hidden = false;
     $("disconnect-btn").hidden = false;
@@ -253,7 +261,14 @@ $("change-btn").addEventListener("click", () => {
     const res = await send("CHANGE_MASTER", { current: cur, next });
     if (!res.ok) return msg($("change-msg"), res.error || "Failed.", "err");
     $("cur-pw").value = $("new-pw").value = $("new-pw2").value = "";
-    msg($("change-msg"), "Master password changed.", "ok");
+    msg(
+      $("change-msg"),
+      res.pinCleared
+        ? "Master password changed. Your PIN was disabled — set a new one below."
+        : "Master password changed.",
+      "ok"
+    );
+    if (res.pinCleared) refresh();
   });
 });
 

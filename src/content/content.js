@@ -61,6 +61,18 @@
     setValue(pw, match.password || "");
   }
 
+  // `matches` carries no secrets — ask for the password only once the user has
+  // actually chosen an entry, so a password is in this script's memory for the
+  // moment it takes to fill a field rather than for the life of the page.
+  async function fillById(id, username) {
+    const res = await send("GET_CREDENTIAL", { id });
+    if (!res || !res.ok) {
+      if (res && res.locked) alert("Unlock DrivePass first, then try again.");
+      return;
+    }
+    fillCredentials({ username, ...res.credential });
+  }
+
   // ---- shadow-root UI host -------------------------------------------------
   let host, root;
   function ui() {
@@ -127,7 +139,7 @@
       row.querySelector(".sub").textContent = m.username || "";
       row.addEventListener("mousedown", (e) => {
         e.preventDefault();
-        fillCredentials(m);
+        fillById(m.id, m.username);
         clearUI();
       });
       panel.appendChild(row);
@@ -179,17 +191,12 @@
   }
 
   async function maybeShowSaveBanner() {
+    // The service worker decides whether this credential is already stored —
+    // it holds the vault, so the comparison happens there and no stored
+    // password has to come back to the page to make it.
     const res = await send("GET_PENDING");
     const p = res && res.pending;
-    if (!p || !p.password) return;
-    // skip if an identical login is already stored
-    const existing = matches.find(
-      (m) => m.username === p.username && m.password === p.password
-    );
-    if (existing) {
-      send("CLEAR_PENDING");
-      return;
-    }
+    if (!p) return;
     const r = ui();
     const banner = document.createElement("div");
     banner.className = "panel banner";
@@ -212,7 +219,7 @@
     banner.querySelector("[data-x]").addEventListener("click", close);
     banner.querySelector("[data-no]").addEventListener("click", close);
     banner.querySelector("[data-yes]").addEventListener("click", async () => {
-      const save = await send("SAVE_FROM_PAGE", p);
+      const save = await send("SAVE_FROM_PAGE");
       if (save && save.locked) alert("Unlock DrivePass first, then try again.");
       close();
     });
@@ -231,7 +238,17 @@
       if (msg?.type === "FILL_CREDENTIALS" && msg.match) {
         fillCredentials(msg.match);
       } else if (msg?.type === "CLEAR_CLIPBOARD") {
-        navigator.clipboard.writeText('');
+        // writeText rejects outright unless the document is focused, and an
+        // unhandled rejection here shows up as an error on the user's page.
+        //
+        // KNOWN LIMITATION: we cannot tell whether the clipboard still holds
+        // the password or something the user copied since — reading it back
+        // would need the clipboardRead permission, which is a steep ask for
+        // this. So the clear is skipped unless the copying tab is still the one
+        // in front, which is the case where it is most likely still ours.
+        if (document.hasFocus()) {
+          navigator.clipboard.writeText("").catch(() => { /* not permitted here */ });
+        }
       }
     });
   }

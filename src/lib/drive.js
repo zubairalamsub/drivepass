@@ -129,6 +129,16 @@ export async function findVaultFile(fileName) {
   return file ? { id: file.id, modifiedTime: file.modifiedTime } : null;
 }
 
+// Current modifiedTime for a file we already know the id of. Used to detect
+// that another device wrote to the vault before we overwrite it. Returns null
+// if the file is gone (deleted or the grant was revoked).
+export async function getFileMeta(fileId) {
+  const res = await driveFetch(`${DRIVE_API}/files/${fileId}?fields=id,modifiedTime`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error("Drive metadata fetch failed: " + res.status);
+  return res.json();
+}
+
 // Create the vault file (multipart: metadata + media). Returns { id, modifiedTime }.
 export async function createVaultFile(fileName, contentObj, interactive = true) {
   const boundary = "drivepass" + Math.abs(hashString(fileName + fileName.length));

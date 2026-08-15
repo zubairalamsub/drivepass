@@ -1,13 +1,19 @@
 // popup.js — DrivePass popup UI logic.
-import { generatePassword } from "../lib/crypto.js";
+import { generatePassword, passwordEntropyBits } from "../lib/crypto.js";
 import { generateTOTP, getTotpTimeRemaining, parseTotpSecret, parseOtpauthURI } from "../lib/totp.js";
-import { generatePassphrase } from "../lib/passphrase.js";
+import { generatePassphrase, passphraseEntropyBits } from "../lib/passphrase.js";
 import { applyTheme } from "../lib/theme.js";
+import { iconHTML } from "../lib/icons.js";
 
 applyTheme();
 
 const $ = (id) => document.getElementById(id);
 const views = ["loading", "create", "unlock", "list", "edit", "generator", "auth"];
+
+// Views that are destinations in the tab bar. Everything else (unlock, create,
+// the entry editor) hides the bar so there is no navigation out of a modal-ish
+// screen with unsaved state.
+const NAV_VIEWS = { list: "list", auth: "auth", generator: "generator" };
 
 function send(type, payload = {}) {
   return new Promise((resolve) => {
@@ -21,18 +27,37 @@ function send(type, payload = {}) {
 function showView(name) {
   for (const v of views) $("view-" + v).hidden = v !== name;
   if (name !== "auth") stopAuthTimer();
+
+  // The editor is reachable from the vault list, so keep Vault lit while it is
+  // open rather than leaving the bar with nothing selected.
+  const navTarget = NAV_VIEWS[name] || (name === "edit" ? "list" : null);
+  $("tabbar").hidden = !navTarget;
+  for (const tab of document.querySelectorAll(".tab")) {
+    const on = tab.dataset.nav === navTarget;
+    tab.classList.toggle("active", on);
+    if (on) tab.setAttribute("aria-current", "page");
+    else tab.removeAttribute("aria-current");
+  }
+  $("view-root").scrollTop = 0;
 }
 
 async function withLoading(btn, asyncFn) {
   if (!btn) return;
-  const original = btn.textContent;
+  // Buttons now contain an <svg> icon alongside their label, so the old
+  // textContent swap would delete the icon and never put it back. Only the
+  // label node is touched; icon buttons just get the busy state.
+  const labelEl = btn.querySelector("span");
+  const target = labelEl || (btn.children.length === 0 ? btn : null);
+  const original = target ? target.textContent : null;
   btn.disabled = true;
-  btn.textContent = original + '…';
+  btn.setAttribute("aria-busy", "true");
+  if (target) target.textContent = original + "…";
   try {
     await asyncFn();
   } finally {
     btn.disabled = false;
-    btn.textContent = original;
+    btn.removeAttribute("aria-busy");
+    if (target) target.textContent = original;
   }
 }
 
@@ -58,11 +83,13 @@ async function refresh() {
   const st = await send("STATUS");
   const badge = $("sync-badge");
   if (!st.connected) {
-    badge.textContent = "Local only";
+    badge.innerHTML = iconHTML("cloud-off") + "<span>Local</span>";
     badge.className = "badge warn";
+    badge.title = "Not connected to Google Drive — this vault is on this device only";
   } else {
-    badge.textContent = "Drive ✓";
+    badge.innerHTML = iconHTML("cloud-ok") + "<span>Synced</span>";
     badge.className = "badge ok";
+    badge.title = st.email ? `Syncing to Drive as ${st.email}` : "Syncing to Google Drive";
   }
   $("lock-btn").hidden = st.locked || !st.hasVault;
 
@@ -87,15 +114,26 @@ async function loadList() {
   showView("list");
 }
 
+// Site icon from Chrome's OWN favicon cache (the "favicon" permission), which
+// resolves entirely on-device. The obvious implementation — Google's
+// s2/favicons endpoint — would announce every hostname in the vault to a third
+// party every time the popup opens, which is exactly what this extension
+// exists to avoid. Sites the user has never visited simply have no icon; the
+// caller falls back to a letter avatar via onerror.
 function getFaviconUrl(url) {
   if (!url) return null;
-  let host;
+  // Called once per entry while building the list, so anything thrown here
+  // takes the whole list down with it. There is always a letter-avatar
+  // fallback, so failure just means "no icon".
   try {
-    host = new URL(url.includes("://") ? url : "https://" + url).hostname;
+    const origin = new URL(url.includes("://") ? url : "https://" + url).origin;
+    const favicon = new URL(chrome.runtime.getURL("/_favicon/"));
+    favicon.searchParams.set("pageUrl", origin);
+    favicon.searchParams.set("size", "32");
+    return favicon.toString();
   } catch {
     return null;
   }
-  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`;
 }
 
 function renderList(filter = "") {
@@ -139,30 +177,39 @@ function renderList(filter = "") {
     li.className = "entry" + (e.favorite ? " favorite" : "");
     
     const favUrl = getFaviconUrl(e.url);
-    const typeIcon = e.type === "card" ? "💳" : e.type === "note" ? "📝" : e.type === "passkey" ? "🔑" : (e.name || e.url || "?").charAt(0);
+    const typeIconName =
+      e.type === "card" ? "card" : e.type === "note" ? "note" : e.type === "passkey" ? "passkey" : null;
+    // Logins fall back to a letter; the other types have no meaningful initial.
+    const letter = (e.name || e.url || "?").charAt(0);
 
     li.innerHTML = `
-      <button class="star-btn" title="${e.favorite ? "Unstar" : "Star"}">${e.favorite ? "★" : "☆"}</button>
+      <button class="star-btn" title="${e.favorite ? "Unstar" : "Star"}" aria-label="${e.favorite ? "Unstar" : "Star"}">
+        ${iconHTML("star")}
+      </button>
       <span class="avatar"></span>
       <span class="meta">
         <div class="name"></div>
         <div class="sub"></div>
       </span>
-      <button class="copy" title="Copy">Copy</button>`;
+      <button class="copy" title="Copy">${iconHTML("copy")}<span>Copy</span></button>`;
 
     const avatarEl = li.querySelector(".avatar");
+    const setFallbackAvatar = () => {
+      avatarEl.innerHTML = typeIconName ? iconHTML(typeIconName) : "";
+      if (!typeIconName) avatarEl.textContent = letter;
+    };
     if (favUrl) {
       const img = document.createElement("img");
       img.src = favUrl;
-      img.width = 16;
-      img.height = 16;
-      img.style.borderRadius = "3px";
-      img.onerror = () => { avatarEl.textContent = typeIcon; };
+      img.width = 18;
+      img.height = 18;
+      img.alt = "";
+      img.onerror = setFallbackAvatar;
       avatarEl.appendChild(img);
     } else {
-      avatarEl.textContent = typeIcon;
+      setFallbackAvatar();
     }
-    
+
     li.querySelector(".name").textContent = e.name || e.url || "(unnamed)";
     const subText = e.type === "card"
       ? (e.card?.number ? "•••• " + e.card.number.slice(-4) : "Credit Card")
@@ -260,6 +307,7 @@ function openEdit(entry) {
       item.appendChild(dateSpan);
       item.addEventListener("click", () => {
         navigator.clipboard.writeText(h.password);
+        send("SCHEDULE_CLEAR_CLIPBOARD");
         toast("Old password copied");
       });
       historyList.appendChild(item);
@@ -282,15 +330,22 @@ $("copy-totp-btn")?.addEventListener("click", () => {
   const code = $("totp-code").textContent;
   if (code && code !== "------" && code !== "INVALID") {
     navigator.clipboard.writeText(code);
+    send("SCHEDULE_CLEAR_CLIPBOARD");
     toast("2FA code copied");
   }
 });
 
-document.querySelectorAll(".filter-btn").forEach((btn) => {
-  btn.addEventListener("click", (e) => {
-    document.querySelectorAll(".filter-btn").forEach((b) => b.classList.remove("active"));
-    e.target.classList.add("active");
-    activeTypeFilter = e.target.dataset.type;
+document.querySelectorAll(".chip[data-type]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    // currentTarget, not target: the chips contain an <svg> and a <span>, so a
+    // click usually lands on a child and target.dataset.type is undefined.
+    for (const b of document.querySelectorAll(".chip[data-type]")) {
+      b.classList.remove("active");
+      b.setAttribute("aria-selected", "false");
+    }
+    btn.classList.add("active");
+    btn.setAttribute("aria-selected", "true");
+    activeTypeFilter = btn.dataset.type;
     renderList($("search").value);
   });
 });
@@ -299,13 +354,13 @@ document.querySelectorAll(".pw-toggle").forEach((btn) => {
   btn.addEventListener("click", (e) => {
     e.preventDefault();
     const input = btn.previousElementSibling;
-    if (input.type === "password") {
-      input.type = "text";
-      btn.style.opacity = "1";
-    } else {
-      input.type = "password";
-      btn.style.opacity = "";
-    }
+    const showing = input.type === "password";
+    input.type = showing ? "text" : "password";
+    // Swap the glyph so the button states what it will do next.
+    btn.innerHTML = iconHTML(showing ? "eye-off" : "eye");
+    const label = showing ? "Hide password" : "Show password";
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
   });
 });
 
@@ -394,9 +449,25 @@ $("lock-btn").addEventListener("click", async () => {
   await refresh();
 });
 $("settings-btn").addEventListener("click", () => chrome.runtime.openOptionsPage());
-$("security-btn").addEventListener("click", () =>
-  chrome.tabs.create({ url: chrome.runtime.getURL("src/security/security.html") })
-);
+
+// Tab bar. Security opens its own full page rather than a popup view, so it is
+// routed separately from the in-popup destinations.
+document.querySelectorAll(".tab[data-nav]").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    const dest = tab.dataset.nav;
+    if (dest === "security") {
+      chrome.tabs.create({ url: chrome.runtime.getURL("src/security/security.html") });
+      return;
+    }
+    if (dest === "auth") return showAuthView();
+    if (dest === "generator") {
+      showView("generator");
+      updateStudioGenerator();
+      return;
+    }
+    loadList();
+  });
+});
 $("add-btn").addEventListener("click", () => openEdit(null));
 $("empty-add-btn")?.addEventListener("click", () => openEdit(null));
 $("search").addEventListener("input", (e) => renderList(e.target.value));
@@ -476,23 +547,18 @@ function updateStudioGenerator() {
     const syms = $("gen-opt-syms").checked;
     $("gen-len-val").textContent = String(len);
 
-    let poolSize = 0;
-    if (upper) poolSize += 26;
-    if (lower) poolSize += 26;
-    if (nums) poolSize += 10;
-    if (syms) poolSize += 20;
-    if (poolSize === 0) poolSize = 26;
-
-    pw = generatePassword(len, { uppercase: upper, lowercase: lower, numbers: nums, symbols: syms });
-    bits = Math.round(len * Math.log2(poolSize));
+    const opts = { upper, lower, digits: nums, symbols: syms };
+    pw = generatePassword(len, opts);
+    // Entropy from the generator's own alphabet, so the meter can't drift from
+    // what is actually generated.
+    bits = Math.round(passwordEntropyBits(len, opts));
   } else {
     const words = parseInt($("gen-words-slider").value, 10);
     const sep = $("gen-sep-select").value;
     $("gen-words-val").textContent = String(words);
 
     pw = generatePassphrase(words, sep, true);
-    // ~96 words list -> ~6.5 bits per word + ~6 bits for number
-    bits = Math.round(words * 6.5 + 6);
+    bits = Math.round(passphraseEntropyBits(words, true));
   }
 
   $("gen-output").textContent = pw;
@@ -513,15 +579,6 @@ function updateStudioGenerator() {
     strengthEl.style.color = "var(--accent)";
   }
 }
-
-$("gen-studio-btn")?.addEventListener("click", () => {
-  showView("generator");
-  updateStudioGenerator();
-});
-
-$("gen-back-btn")?.addEventListener("click", () => {
-  loadList();
-});
 
 $("gen-mode-random")?.addEventListener("click", () => {
   genMode = "random";
@@ -724,11 +781,6 @@ async function saveAuthAccount() {
   await showAuthView();
 }
 
-$("auth-btn").addEventListener("click", showAuthView);
-$("auth-back-btn").addEventListener("click", () => {
-  stopAuthTimer();
-  loadList();
-});
 $("auth-add-toggle").addEventListener("click", () => {
   const p = $("auth-add-panel");
   p.hidden = !p.hidden;

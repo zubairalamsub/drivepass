@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Phase 1 spike: no INTERNET permission at all. The Drive client comes in
+         a later phase, and its absence here is provable rather than promised. -->
+
+    <application
+        android:allowBackup="false"
+        android:label="DrivePass"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.DrivePass">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="DrivePass">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

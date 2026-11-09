@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.DrivePass" parent="android:Theme.Material.NoActionBar">
-        <item name="android:statusBarColor">#0C0E14</item>
-        <item name="android:windowBackground">#0C0E14</item>
+    <!-- Only what shows before Compose draws its first frame: the window
+         background (also the Android 12+ splash background). Colours match the
+         "bg" token in src/common.css. System bar colours are set at runtime by
+         enableEdgeToEdge(). -->
+    <style name="Theme.DrivePass" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
     </style>
 </resources>

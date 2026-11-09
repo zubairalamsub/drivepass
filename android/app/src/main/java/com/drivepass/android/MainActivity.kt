@@ -2,16 +2,18 @@ package com.drivepass.android
 
 import android.os.Bundle
 import android.view.WindowManager
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.drivepass.android.ui.DrivePassApp
 import com.drivepass.android.ui.DrivePassTheme
 
-class MainActivity : ComponentActivity() {
+// FragmentActivity, not ComponentActivity: androidx BiometricPrompt hosts
+// itself in a fragment and will not accept a bare ComponentActivity.
+class MainActivity : FragmentActivity() {
 
     private val vm: VaultViewModel by viewModels()
 

@@ -20,12 +20,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.fragment.app.FragmentActivity
+import com.drivepass.android.BiometricGate
 import com.drivepass.android.DriveAuth
 import com.drivepass.android.SensitiveClipboard
 import com.drivepass.android.UiState
@@ -96,6 +101,48 @@ fun DrivePassApp(vm: VaultViewModel) {
             }
     }
 
+    // BiometricPrompt hosts itself in a fragment, so it needs the activity, not
+    // whatever ContextWrapper the composition happens to be handing out.
+    val activity = remember(ctx) {
+        generateSequence(ctx) { (it as? android.content.ContextWrapper)?.baseContext }
+            .filterIsInstance<FragmentActivity>()
+            .firstOrNull()
+    }
+    var showQuickUnlock by remember { mutableStateOf(false) }
+
+    val biometricUnlock: () -> Unit = {
+        val cipher = vm.beginBiometricUnlock()
+        if (cipher != null && activity != null) {
+            BiometricGate.prompt(
+                activity,
+                title = "Unlock DrivePass",
+                subtitle = "Use your fingerprint to open this vault",
+                cipher = cipher,
+                onSuccess = vm::completeBiometricUnlock,
+                onError = vm::quickUnlockFailed,
+            )
+        }
+    }
+
+    val biometricEnrol: () -> Unit = {
+        val cipher = vm.beginBiometricEnrol()
+        if (cipher != null && activity != null) {
+            BiometricGate.prompt(
+                activity,
+                title = "Turn on fingerprint unlock",
+                subtitle = "Confirm to protect this vault's key with your fingerprint",
+                cipher = cipher,
+                onSuccess = vm::completeBiometricEnrol,
+                onError = {},
+            )
+        }
+    }
+
+    // Offer the fingerprint straight away on arriving at a vault that has one,
+    // keyed on the vault so a failed attempt doesn't loop the prompt.
+    val arrivedAt = (state as? UiState.Unlock)?.takeIf { it.quick.biometric }?.vault?.source
+    LaunchedEffect(arrivedAt) { if (arrivedAt != null) biometricUnlock() }
+
     BackHandler(enabled = state is UiState.Unlock && !(state as UiState.Unlock).busy) { vm.closeVault() }
 
     CompositionLocalProvider(LocalCopier provides copier) {
@@ -124,9 +171,35 @@ fun DrivePassApp(vm: VaultViewModel) {
                         onDemo = vm::openDemo,
                         onDismissError = vm::dismissError,
                     )
-                    is UiState.Unlock -> UnlockScreen(s, onUnlock = vm::unlock, onBack = vm::closeVault)
-                    is UiState.Unlocked -> VaultScreen(s, onLock = vm::lock)
+                    is UiState.Unlock -> UnlockScreen(
+                        state = s,
+                        onUnlock = vm::unlock,
+                        onBiometric = biometricUnlock,
+                        onPin = vm::unlockWithPin,
+                        onBack = vm::closeVault,
+                    )
+                    is UiState.Unlocked -> VaultScreen(
+                        state = s,
+                        onLock = vm::lock,
+                        onManageQuickUnlock = { showQuickUnlock = true },
+                    )
                 }
+            }
+
+            val unlocked = state as? UiState.Unlocked
+            if (unlocked != null && (showQuickUnlock || unlocked.offerQuickSetup)) {
+                QuickUnlockDialog(
+                    biometricAvailable = BiometricGate.available(ctx),
+                    biometricOn = unlocked.quick.biometric,
+                    pinOn = unlocked.quick.pin,
+                    onEnableBiometric = biometricEnrol,
+                    onSetPin = vm::enablePin,
+                    onDisable = vm::disableQuickUnlock,
+                    onDismiss = {
+                        showQuickUnlock = false
+                        vm.dismissQuickSetup()
+                    },
+                )
             }
         }
     }

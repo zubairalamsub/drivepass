@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.FileNotFoundException
+import javax.crypto.Cipher
 
 /** Where an opened vault was read from, and what it takes to re-read it. */
 sealed interface VaultSource {
@@ -61,9 +62,26 @@ sealed interface UiState {
         val busy: Boolean = false,
         val error: String? = null,
         val wrongPassword: Boolean = false,
+        val quick: QuickState = QuickState(),
     ) : UiState
 
-    data class Unlocked(val vault: OpenedVault, val entries: List<Entry>) : UiState
+    data class Unlocked(
+        val vault: OpenedVault,
+        val entries: List<Entry>,
+        /** Show the one-time "set up quick unlock?" prompt over the vault. */
+        val offerQuickSetup: Boolean = false,
+        /** What is enrolled right now, so the manage dialog stays in step. */
+        val quick: QuickState = QuickState(),
+    ) : UiState
+}
+
+/** Which quick-unlock methods are usable for the vault currently on screen. */
+data class QuickState(
+    val biometric: Boolean = false,
+    val pin: Boolean = false,
+    val pinAttemptsLeft: Int = QuickUnlock.MAX_PIN_ATTEMPTS,
+) {
+    val any get() = biometric || pin
 }
 
 /**
@@ -83,6 +101,45 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
     private var autoLockJob: Job? = null
     private var backgroundedAt = 0L
 
+    /**
+     * The derived vault key for the open session, held so quick unlock can be
+     * enrolled after the unlock rather than only during it. Zeroed whenever the
+     * vault locks, alongside dropping the decrypted entries.
+     */
+    private var sessionKey: ByteArray? = null
+
+    /** Which quick-unlock methods apply to [vault]; none for the demo. */
+    private fun quickState(vault: OpenedVault): QuickState {
+        if (vault.isDemo || !QuickUnlock.matches(prefs, vault.envelope)) return QuickState()
+        return QuickState(
+            biometric = QuickUnlock.hasBiometric(prefs),
+            pin = QuickUnlock.hasPin(prefs),
+            pinAttemptsLeft = QuickUnlock.pinAttemptsLeft(prefs),
+        )
+    }
+
+    private fun unlockState(vault: OpenedVault) = UiState.Unlock(vault, quick = quickState(vault))
+
+    /** What is enrolled, without reference to a vault — for the open vault. */
+    private fun quickStatusNow() = QuickState(
+        biometric = QuickUnlock.hasBiometric(prefs),
+        pin = QuickUnlock.hasPin(prefs),
+        pinAttemptsLeft = QuickUnlock.pinAttemptsLeft(prefs),
+    )
+
+    /** Common tail of every successful unlock, whichever method got us here. */
+    private fun opened(vault: OpenedVault, key: ByteArray, entries: List<Entry>, offerSetup: Boolean) {
+        sessionKey?.fill(0)
+        sessionKey = key
+        (vault.source as? VaultSource.File)?.let { rememberRecent(it.uri, vault.name) }
+        _state.value = UiState.Unlocked(
+            vault,
+            entries,
+            offerQuickSetup = offerSetup && !vault.isDemo && !QuickUnlock.isSetUp(prefs),
+            quick = quickStatusNow(),
+        )
+    }
+
     // ---- Opening a file ------------------------------------------------------
 
     fun openPicked(uri: Uri) = open(uri, fromRecent = false)
@@ -94,7 +151,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
     fun openDemo() {
         val json = getApplication<Application>().assets.open("fixture-vault.enc")
             .bufferedReader().use { it.readText() }
-        _state.value = UiState.Unlock(OpenedVault("Demo vault", VaultCrypto.parseEnvelope(json), VaultSource.Demo))
+        _state.value = unlockState(OpenedVault("Demo vault", VaultCrypto.parseEnvelope(json), VaultSource.Demo))
     }
 
     private fun open(uri: Uri, fromRecent: Boolean) {
@@ -104,7 +161,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
             result.fold(
                 onSuccess = { vault ->
                     if (!fromRecent) rememberRecent(uri, vault.name)
-                    _state.value = UiState.Unlock(vault)
+                    _state.value = unlockState(vault)
                 },
                 onFailure = { e ->
                     // A remembered file that has gone away (deleted, moved, or its
@@ -147,18 +204,18 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching {
                     val key = VaultCrypto.deriveKey(password, s.vault.envelope.salt, s.vault.envelope.iterations)
                     try {
-                        VaultModel.liveSorted(VaultModel.parse(VaultCrypto.decrypt(key, s.vault.envelope)))
-                    } finally {
+                        key to VaultModel.liveSorted(VaultModel.parse(VaultCrypto.decrypt(key, s.vault.envelope)))
+                    } catch (e: Throwable) {
+                        // Only hold on to the key if it actually opened the vault.
                         key.fill(0)
+                        throw e
+                    } finally {
                         password.fill('\u0000')
                     }
                 }
             }
             result.fold(
-                onSuccess = { entries ->
-                    s.vault.uri?.let { rememberRecent(it, s.vault.name) }
-                    _state.value = UiState.Unlocked(s.vault, entries)
-                },
+                onSuccess = { (key, entries) -> opened(s.vault, key, entries, offerSetup = true) },
                 onFailure = { e ->
                     _state.value = s.copy(
                         busy = false,
@@ -177,12 +234,14 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun lock() {
         autoLockJob?.cancel()
+        sessionKey?.fill(0)
+        sessionKey = null
         val vault = when (val s = _state.value) {
             is UiState.Unlocked -> s.vault
             is UiState.Unlock -> s.vault
             is UiState.Welcome -> return
         }
-        _state.value = UiState.Unlock(vault)
+        _state.value = unlockState(vault)
         val source = vault.source
         if (source is VaultSource.Demo) return
         viewModelScope.launch {
@@ -205,6 +264,8 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeVault() {
         autoLockJob?.cancel()
+        sessionKey?.fill(0)
+        sessionKey = null
         _state.value = UiState.Welcome(loadRecent())
     }
 
@@ -233,6 +294,123 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         backgroundedAt = 0L
     }
 
+    // ---- Quick unlock --------------------------------------------------------
+
+    /** A Cipher for BiometricPrompt, or null if the stored key is unusable. */
+    fun beginBiometricUnlock(): Cipher? {
+        val s = _state.value as? UiState.Unlock ?: return null
+        return try {
+            QuickUnlock.beginBiometricUnlock(prefs)
+        } catch (e: Throwable) {
+            _state.value = s.copy(error = describe(e), quick = quickState(s.vault))
+            null
+        }
+    }
+
+    /** The fingerprint matched; the cipher can now unwrap the vault key. */
+    fun completeBiometricUnlock(cipher: Cipher) {
+        val s = _state.value as? UiState.Unlock ?: return
+        if (s.busy) return
+        _state.value = s.copy(busy = true, error = null)
+        viewModelScope.launch {
+            val key = runCatching { QuickUnlock.finishBiometricUnlock(prefs, cipher) }.getOrElse { e ->
+                _state.value = s.copy(busy = false, error = describe(e), quick = quickState(s.vault))
+                return@launch
+            }
+            openWithKey(s, key)
+        }
+    }
+
+    fun unlockWithPin(pin: CharArray) {
+        val s = _state.value as? UiState.Unlock ?: return
+        if (s.busy) return
+        _state.value = s.copy(busy = true, error = null, wrongPassword = false)
+        viewModelScope.launch {
+            val key = withContext(Dispatchers.Default) {
+                runCatching { QuickUnlock.unlockWithPin(prefs, pin) }
+            }.getOrElse { e ->
+                pin.fill('\u0000')
+                _state.value = s.copy(busy = false, error = describe(e), quick = quickState(s.vault))
+                return@launch
+            }
+            pin.fill('\u0000')
+            openWithKey(s, key)
+        }
+    }
+
+    /** Shared tail: decrypt with a key quick unlock recovered. */
+    private suspend fun openWithKey(s: UiState.Unlock, key: ByteArray) {
+        val result = withContext(Dispatchers.Default) {
+            runCatching {
+                try {
+                    VaultModel.liveSorted(VaultModel.parse(VaultCrypto.decrypt(key, s.vault.envelope)))
+                } catch (e: Throwable) {
+                    key.fill(0)
+                    throw e
+                }
+            }
+        }
+        result.fold(
+            onSuccess = { entries -> opened(s.vault, key, entries, offerSetup = false) },
+            onFailure = { e ->
+                // A stored key that no longer opens this vault is stale, not a
+                // typo — the master password must have changed. Stop offering it.
+                if (e is VaultError.WrongPassword) QuickUnlock.disable(prefs)
+                _state.value = s.copy(
+                    busy = false,
+                    error = if (e is VaultError.WrongPassword)
+                        "This vault's master password has changed, so quick unlock was reset."
+                    else describe(e),
+                    quick = quickState(s.vault),
+                )
+            },
+        )
+    }
+
+    // ---- Quick unlock enrolment ----------------------------------------------
+
+    fun beginBiometricEnrol(): Cipher? = runCatching { QuickUnlock.beginBiometricEnrol() }.getOrNull()
+
+    fun completeBiometricEnrol(cipher: Cipher) {
+        val s = _state.value as? UiState.Unlocked ?: return
+        val key = sessionKey ?: return
+        runCatching { QuickUnlock.finishBiometricEnrol(prefs, cipher, key, s.vault.envelope) }
+        _state.value = s.copy(offerQuickSetup = false, quick = quickStatusNow())
+    }
+
+    fun enablePin(pin: CharArray) {
+        val s = _state.value as? UiState.Unlocked ?: return
+        val key = sessionKey ?: return
+        viewModelScope.launch {
+            withContext(Dispatchers.Default) {
+                runCatching { QuickUnlock.enablePin(prefs, pin, key, s.vault.envelope) }
+                pin.fill('\u0000')
+            }
+            (_state.value as? UiState.Unlocked)?.let {
+                _state.value = it.copy(offerQuickSetup = false, quick = quickStatusNow())
+            }
+        }
+    }
+
+    fun disableQuickUnlock() {
+        QuickUnlock.disable(prefs)
+        when (val s = _state.value) {
+            is UiState.Unlocked -> _state.value = s.copy(offerQuickSetup = false, quick = QuickState())
+            is UiState.Unlock -> _state.value = s.copy(quick = QuickState())
+            is UiState.Welcome -> Unit
+        }
+    }
+
+    fun dismissQuickSetup() {
+        (_state.value as? UiState.Unlocked)?.let { _state.value = it.copy(offerQuickSetup = false) }
+    }
+
+    /** The biometric prompt failed for a reason worth showing. */
+    fun quickUnlockFailed(message: String?) {
+        val s = _state.value as? UiState.Unlock ?: return
+        _state.value = s.copy(busy = false, error = message, quick = quickState(s.vault))
+    }
+
     // ---- Google Drive --------------------------------------------------------
 
     /**
@@ -256,7 +434,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { findAndReadDrive(token) } }
             result.fold(
-                onSuccess = { _state.value = UiState.Unlock(it) },
+                onSuccess = { _state.value = unlockState(it) },
                 onFailure = { e ->
                     driveToken = null
                     _state.value = UiState.Welcome(loadRecent(), error = describe(e))
@@ -350,6 +528,13 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
             is DriveClient.Unauthorized -> "Google sign-in has expired. Connect Google Drive again."
             is DriveClient.Offline -> "Couldn't reach Google Drive. Check your connection and try again."
             is DriveClient.DriveError -> e.message ?: "Google Drive couldn't be read."
+            is QuickUnlock.BadPin ->
+                if (e.attemptsLeft == 0) "Too many wrong PINs. Quick unlock was turned off — use your master password."
+                else "Wrong PIN. ${e.attemptsLeft} ${if (e.attemptsLeft == 1) "try" else "tries"} left."
+            is QuickUnlock.BiometricsChanged ->
+                "Fingerprints on this device changed, so quick unlock was reset. Unlock with your master password to set it up again."
+            is QuickUnlock.WrongVault ->
+                "Quick unlock was set up for a different vault. Use your master password."
             is FileNotFoundException -> "That file couldn't be opened. It may have been moved or deleted."
             is SecurityException -> "DrivePass no longer has permission to open that file. Choose it again."
             else -> "Something went wrong: ${e.message ?: e::class.java.simpleName}"

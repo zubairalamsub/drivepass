@@ -68,6 +68,11 @@ dependencies {
     // REST calls themselves are hand-rolled in DriveClient.kt.
     implementation("com.google.android.gms:play-services-auth:21.3.0")
 
+    // Quick unlock. BiometricPrompt needs a FragmentActivity host, which is why
+    // MainActivity extends FragmentActivity rather than ComponentActivity.
+    implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.fragment:fragment-ktx:1.8.5")
+
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")

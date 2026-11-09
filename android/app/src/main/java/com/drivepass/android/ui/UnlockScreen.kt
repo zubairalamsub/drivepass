@@ -52,7 +52,13 @@ import com.drivepass.android.UiState
 private const val DEMO_PASSWORD = "correct-horse-battery-staple"
 
 @Composable
-fun UnlockScreen(state: UiState.Unlock, onUnlock: (CharArray) -> Unit, onBack: () -> Unit) {
+fun UnlockScreen(
+    state: UiState.Unlock,
+    onUnlock: (CharArray) -> Unit,
+    onBiometric: () -> Unit,
+    onPin: (CharArray) -> Unit,
+    onBack: () -> Unit,
+) {
     // Plain `remember`, not rememberSaveable: saved state is written to disk by
     // the system, and a master password must never be.
     var password by remember { mutableStateOf("") }
@@ -65,8 +71,13 @@ fun UnlockScreen(state: UiState.Unlock, onUnlock: (CharArray) -> Unit, onBack: (
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(Unit) {
-        focus.requestFocus()
-        keyboard?.show()
+        // With a quick method on offer, popping the keyboard on the master
+        // password field pushes the slow path into the user's face instead of
+        // the fast one.
+        if (!state.quick.any) {
+            focus.requestFocus()
+            keyboard?.show()
+        }
     }
 
     val canSubmit = password.isNotEmpty() && !state.busy
@@ -106,6 +117,15 @@ fun UnlockScreen(state: UiState.Unlock, onUnlock: (CharArray) -> Unit, onBack: (
             Spacer(Modifier.height(10.dp))
             FileChip(state.vault.name, state.vault.isDemo, state.vault.isFromDrive)
             Spacer(Modifier.height(28.dp))
+
+            if (state.quick.any) {
+                QuickUnlockPanel(
+                    quick = state.quick,
+                    busy = state.busy,
+                    onBiometric = onBiometric,
+                    onPin = onPin,
+                )
+            }
 
             val showError = state.error != null && !editedSinceError
             OutlinedTextField(

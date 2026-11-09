@@ -22,10 +22,24 @@ data class Entry(
     val updatedAt: Long,
     val deletedAt: Long?,
     val cardNumber: String,
+    val cardHolder: String,
+    val cardExpMonth: String,
+    val cardExpYear: String,
+    val cardCvv: String,
     val passkeyUserName: String,
+    val passkeyRpId: String,
+    val tags: List<String>,
     val raw: JSONObject,
 ) {
     val isDeleted get() = deletedAt != null
+
+    /** "MM/YY" the way it is printed on the card, or "" when unset. */
+    val cardExpiry: String
+        get() {
+            if (cardExpMonth.isEmpty()) return cardExpYear
+            if (cardExpYear.isEmpty()) return cardExpMonth.padStart(2, '0')
+            return cardExpMonth.padStart(2, '0') + "/" + cardExpYear.takeLast(2)
+        }
 
     /** The secondary line the desktop UI shows for this entry. */
     fun subtitle(): String = when (type) {
@@ -71,7 +85,14 @@ object VaultModel {
             updatedAt = o.optLong("updatedAt"),
             deletedAt = deleted,
             cardNumber = card?.optString("number") ?: "",
+            cardHolder = card?.optString("holder") ?: "",
+            cardExpMonth = card?.optString("expMonth") ?: "",
+            cardExpYear = card?.optString("expYear") ?: "",
+            cardCvv = card?.optString("cvv") ?: "",
             passkeyUserName = passkey?.optString("userName") ?: "",
+            passkeyRpId = passkey?.optString("rpId") ?: "",
+            tags = o.optJSONArray("tags")?.let { t -> (0 until t.length()).map { t.optString(it) } }
+                ?.filter { it.isNotBlank() }.orEmpty(),
             raw = o,
         )
     }

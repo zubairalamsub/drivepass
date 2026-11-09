@@ -19,6 +19,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -27,6 +28,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -38,12 +40,14 @@ import com.drivepass.android.UiState
 @Composable
 fun WelcomeScreen(
     state: UiState.Welcome,
+    onConnectDrive: () -> Unit,
     onPickFile: () -> Unit,
     onOpenRecent: () -> Unit,
     onForgetRecent: () -> Unit,
     onDemo: () -> Unit,
     onDismissError: () -> Unit,
 ) {
+    val busy = state.loading || state.driveBusy
     Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.TopCenter) {
         Column(
             Modifier
@@ -72,28 +76,38 @@ fun WelcomeScreen(
             }
 
             state.recent?.let {
-                RecentCard(it, state.loading, onOpenRecent, onForgetRecent)
+                RecentCard(it, busy, onOpenRecent, onForgetRecent)
                 Spacer(Modifier.height(16.dp))
             }
 
-            val primaryLabel = if (state.recent == null) "Choose vault file" else "Choose a different file"
-            if (state.recent == null) {
-                Button(
-                    onClick = onPickFile,
-                    enabled = !state.loading,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
-                ) {
-                    if (state.loading) Spinner() else Text(primaryLabel)
+            Button(
+                onClick = onConnectDrive,
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+            ) {
+                if (state.driveBusy) {
+                    // On a filled button the spinner has to take the button's
+                    // content colour, or it is drawn primary-on-primary.
+                    Spinner(LocalContentColor.current)
+                } else {
+                    Icon(DpIcons.CloudOk, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.size(10.dp))
+                    Text("Connect Google Drive")
                 }
-            } else {
-                OutlinedButton(
-                    onClick = onPickFile,
-                    enabled = !state.loading,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
-                ) { Text(primaryLabel) }
             }
+
+            Spacer(Modifier.height(10.dp))
+            val fileLabel = if (state.recent == null) "Choose vault file" else "Choose a different file"
+            OutlinedButton(
+                onClick = onPickFile,
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+            ) {
+                if (state.loading) Spinner() else Text(fileLabel)
+            }
+
             Spacer(Modifier.height(4.dp))
-            TextButton(onClick = onDemo, enabled = !state.loading) { Text("Try the demo vault") }
+            TextButton(onClick = onDemo, enabled = !busy) { Text("Try the demo vault") }
 
             Spacer(Modifier.height(24.dp))
             HowTo()
@@ -107,7 +121,7 @@ fun WelcomeScreen(
                 )
                 Spacer(Modifier.size(6.dp))
                 Text(
-                    "Read-only · no internet access · decrypted only on this device",
+                    "Read-only · nothing is uploaded · decrypted only on this device",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -168,8 +182,8 @@ private fun HowTo() {
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Finding your vault", style = MaterialTheme.typography.titleSmall)
-            Step(DpIcons.Folder, "Tap Choose vault file and open Drive from the picker's menu.")
-            Step(DpIcons.CloudOk, "Select vault.enc — the file the DrivePass extension keeps in your Drive.")
+            Step(DpIcons.CloudOk, "Connect Google Drive to look for vault.enc in the account you sync with.")
+            Step(DpIcons.Folder, "Not found? Choose vault file and open Drive from the picker's menu instead.")
             Step(DpIcons.Lock, "Unlock it with your master password. Next time it's one tap away.")
         }
     }
@@ -208,6 +222,6 @@ fun ErrorBanner(message: String, onDismiss: (() -> Unit)? = null) {
 }
 
 @Composable
-fun Spinner() {
-    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
+fun Spinner(color: Color = MaterialTheme.colorScheme.primary) {
+    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = color)
 }

@@ -2,10 +2,12 @@ package com.drivepass.android.ui
 
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import android.view.HapticFeedbackConstants
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
@@ -24,9 +26,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import com.drivepass.android.DriveAuth
 import com.drivepass.android.SensitiveClipboard
 import com.drivepass.android.UiState
 import com.drivepass.android.VaultViewModel
+
+private const val TAG = "DrivePassDrive"
 
 @Composable
 fun DrivePassApp(vm: VaultViewModel) {
@@ -52,6 +57,45 @@ fun DrivePassApp(vm: VaultViewModel) {
         if (uri != null) vm.openPicked(uri)
     }
 
+    // Play Services hands back a PendingIntent the first time (account picker +
+    // consent); afterwards the token usually arrives without any UI at all.
+    val driveConsent = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        runCatching { DriveAuth.resultFrom(ctx, result.data).accessToken }.fold(
+            onSuccess = { token ->
+                if (token != null) vm.openFromDrive(token)
+                else vm.driveFailed("Google completed sign-in but returned no access token.")
+            },
+            // Covers the ordinary case too: backing out of the account picker
+            // arrives here as a failure, not as a cancelled result.
+            onFailure = { e ->
+                Log.w(TAG, "consent returned resultCode=${result.resultCode}", e)
+                vm.driveFailed(DriveAuth.explain(e))
+            },
+        )
+    }
+
+    val connectDrive: () -> Unit = {
+        vm.driveConnecting()
+        DriveAuth.authorize(ctx)
+            .addOnSuccessListener { auth ->
+                val pending = auth.pendingIntent
+                val token = auth.accessToken
+                Log.i(TAG, "authorize ok: resolution=${auth.hasResolution()} token=${token != null}")
+                when {
+                    auth.hasResolution() && pending != null ->
+                        driveConsent.launch(IntentSenderRequest.Builder(pending).build())
+                    token != null -> vm.openFromDrive(token)
+                    else -> vm.driveFailed("Google granted the scope but returned no access token.")
+                }
+            }
+            .addOnFailureListener { e ->
+                Log.w(TAG, "authorize failed", e)
+                vm.driveFailed(DriveAuth.explain(e))
+            }
+    }
+
     BackHandler(enabled = state is UiState.Unlock && !(state as UiState.Unlock).busy) { vm.closeVault() }
 
     CompositionLocalProvider(LocalCopier provides copier) {
@@ -71,6 +115,7 @@ fun DrivePassApp(vm: VaultViewModel) {
                 when (s) {
                     is UiState.Welcome -> WelcomeScreen(
                         state = s,
+                        onConnectDrive = connectDrive,
                         // The extension saves vault.enc as application/json, but a
                         // copy that went through a download may be anything.
                         onPickFile = { picker.launch(arrayOf("*/*")) },

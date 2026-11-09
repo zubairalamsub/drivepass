@@ -104,7 +104,7 @@ fun UnlockScreen(state: UiState.Unlock, onUnlock: (CharArray) -> Unit, onBack: (
             Spacer(Modifier.height(20.dp))
             Text("Unlock your vault", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(10.dp))
-            FileChip(state.vault.name, state.vault.isDemo)
+            FileChip(state.vault.name, state.vault.isDemo, state.vault.isFromDrive)
             Spacer(Modifier.height(28.dp))
 
             val showError = state.error != null && !editedSinceError
@@ -198,7 +198,7 @@ fun UnlockScreen(state: UiState.Unlock, onUnlock: (CharArray) -> Unit, onBack: (
 }
 
 @Composable
-private fun FileChip(name: String, demo: Boolean) {
+private fun FileChip(name: String, demo: Boolean, fromDrive: Boolean = false) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = MaterialTheme.shapes.extraLarge,
@@ -212,7 +212,9 @@ private fun FileChip(name: String, demo: Boolean) {
             )
             Spacer(Modifier.size(6.dp))
             Text(
-                name,
+                // Where it came from matters: a stale picked copy and the live
+                // Drive file can disagree.
+                if (fromDrive) "$name · Drive" else name,
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

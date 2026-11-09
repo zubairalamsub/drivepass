@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Phase 1 spike: no INTERNET permission at all. The Drive client comes in
-         a later phase, and its absence here is provable rather than promised. -->
+    <!-- The Drive client (phase 2) needs the network. INTERNET is the only
+         permission here: there is still no storage, contacts or account
+         permission, and nothing is uploaded — the Drive calls are two GETs. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Lets the Drive client say "you're offline" instead of timing out. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:allowBackup="false"

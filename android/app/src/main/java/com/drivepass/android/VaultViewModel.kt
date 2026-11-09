@@ -17,14 +17,31 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.FileNotFoundException
 
+/** Where an opened vault was read from, and what it takes to re-read it. */
+sealed interface VaultSource {
+    /** The bundled demo vault: no file, no account, nothing to re-read. */
+    data object Demo : VaultSource
+
+    /** A file chosen through the system picker, held by a content URI. */
+    data class File(val uri: Uri) : VaultSource
+
+    /** A file fetched from Google Drive over the network. */
+    data class Drive(val fileId: String) : VaultSource
+}
+
 /** A vault file that has been read and whose envelope parsed; not yet unlocked. */
 data class OpenedVault(
     val name: String,
     val envelope: VaultEnvelope,
-    /** Null for the bundled demo, which has no file behind it. */
-    val uri: Uri?,
+    val source: VaultSource,
 ) {
-    val isDemo get() = uri == null
+    val isDemo get() = source is VaultSource.Demo
+
+    /** Came from Drive rather than a picked file — the unlock screen says so. */
+    val isFromDrive get() = source is VaultSource.Drive
+
+    /** The picked-file URI, when this vault came from the system picker. */
+    val uri: Uri? get() = (source as? VaultSource.File)?.uri
 }
 
 /** The last vault opened from a file, remembered so it is one tap next time. */
@@ -35,6 +52,8 @@ sealed interface UiState {
         val recent: RecentVault?,
         val loading: Boolean = false,
         val error: String? = null,
+        /** A Drive sign-in or fetch is in flight. */
+        val driveBusy: Boolean = false,
     ) : UiState
 
     data class Unlock(
@@ -75,7 +94,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
     fun openDemo() {
         val json = getApplication<Application>().assets.open("fixture-vault.enc")
             .bufferedReader().use { it.readText() }
-        _state.value = UiState.Unlock(OpenedVault("Demo vault", VaultCrypto.parseEnvelope(json), null))
+        _state.value = UiState.Unlock(OpenedVault("Demo vault", VaultCrypto.parseEnvelope(json), VaultSource.Demo))
     }
 
     private fun open(uri: Uri, fromRecent: Boolean) {
@@ -114,7 +133,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         } ?: throw FileNotFoundException()
         // Parse now, not after the user has typed their password: a wrong file
         // should be reported the moment it is picked.
-        return OpenedVault(name, VaultCrypto.parseEnvelope(text), uri)
+        return OpenedVault(name, VaultCrypto.parseEnvelope(text), VaultSource.File(uri))
     }
 
     // ---- Unlocking -----------------------------------------------------------
@@ -164,11 +183,23 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
             is UiState.Welcome -> return
         }
         _state.value = UiState.Unlock(vault)
-        val uri = vault.uri ?: return
+        val source = vault.source
+        if (source is VaultSource.Demo) return
         viewModelScope.launch {
-            val fresh = withContext(Dispatchers.IO) { runCatching { read(uri) }.getOrNull() } ?: return@launch
+            val fresh = withContext(Dispatchers.IO) {
+                runCatching {
+                    when (source) {
+                        is VaultSource.File -> read(source.uri)
+                        // Without a live token the re-read is skipped and the
+                        // already-parsed envelope stands; the user can still
+                        // unlock, just without picking up a remote edit.
+                        is VaultSource.Drive -> driveToken?.let { readDrive(it, source.fileId, vault.name) }
+                        VaultSource.Demo -> null
+                    }
+                }.getOrNull()
+            } ?: return@launch
             val now = _state.value
-            if (now is UiState.Unlock && now.vault.uri == uri && !now.busy) _state.value = now.copy(vault = fresh)
+            if (now is UiState.Unlock && now.vault.source == source && !now.busy) _state.value = now.copy(vault = fresh)
         }
     }
 
@@ -201,6 +232,55 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         }
         backgroundedAt = 0L
     }
+
+    // ---- Google Drive --------------------------------------------------------
+
+    /**
+     * Access token for the current Drive session.
+     *
+     * Memory only, and cleared on every failure. Persisting it would leave a
+     * live Drive credential on disk, which is the thing this app goes out of its
+     * way not to do with the vault key.
+     */
+    private var driveToken: String? = null
+
+    /** The account picker / consent screen is up; show the spinner meanwhile. */
+    fun driveConnecting() {
+        (_state.value as? UiState.Welcome)?.let { _state.value = it.copy(driveBusy = true, error = null) }
+    }
+
+    /** The UI has an access token for drive.file — go find the vault. */
+    fun openFromDrive(token: String) {
+        driveToken = token
+        _state.value = UiState.Welcome(loadRecent(), driveBusy = true)
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { findAndReadDrive(token) } }
+            result.fold(
+                onSuccess = { _state.value = UiState.Unlock(it) },
+                onFailure = { e ->
+                    driveToken = null
+                    _state.value = UiState.Welcome(loadRecent(), error = describe(e))
+                },
+            )
+        }
+    }
+
+    /** Sign-in was cancelled, or Play Services refused to authorize. */
+    fun driveFailed(message: String?) {
+        driveToken = null
+        _state.value = UiState.Welcome(
+            loadRecent(),
+            error = message ?: "Google sign-in didn't complete. Try again, or choose the file instead.",
+        )
+    }
+
+    private fun findAndReadDrive(token: String): OpenedVault {
+        val file = DriveClient.findVault(token) ?: throw NoVaultInDrive()
+        return readDrive(token, file.id, file.name)
+    }
+
+    private fun readDrive(token: String, fileId: String, name: String): OpenedVault =
+        OpenedVault(name, VaultCrypto.parseEnvelope(DriveClient.download(token, fileId)), VaultSource.Drive(fileId))
 
     // ---- Recent vault --------------------------------------------------------
 
@@ -240,6 +320,9 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
 
     private class FileTooLarge : Exception()
 
+    /** Signed in, but the drive.file scope exposes no vault.enc to this app. */
+    private class NoVaultInDrive : Exception()
+
     companion object {
         /** How long the app may sit in the background before the vault locks. */
         const val AUTO_LOCK_MS = 5 * 60_000L
@@ -257,6 +340,16 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
             is VaultError.Corrupt -> "This vault file looks damaged (${e.message?.substringAfter(": ")})."
             is VaultError -> e.message ?: "This vault file can't be opened."
             is FileTooLarge -> "That file is far too large to be a DrivePass vault."
+            // drive.file only exposes files the project created or the user
+            // opened for it. An Android client in the same Cloud project as the
+            // extension does see the extension's vault.enc; this is the fallback
+            // for the case where no vault has been created at all yet.
+            is NoVaultInDrive ->
+                "Signed in, but Google Drive isn't sharing a vault.enc with this app yet. " +
+                    "Use Choose vault file once to grant access to it."
+            is DriveClient.Unauthorized -> "Google sign-in has expired. Connect Google Drive again."
+            is DriveClient.Offline -> "Couldn't reach Google Drive. Check your connection and try again."
+            is DriveClient.DriveError -> e.message ?: "Google Drive couldn't be read."
             is FileNotFoundException -> "That file couldn't be opened. It may have been moved or deleted."
             is SecurityException -> "DrivePass no longer has permission to open that file. Choose it again."
             else -> "Something went wrong: ${e.message ?: e::class.java.simpleName}"

@@ -63,6 +63,11 @@ dependencies {
 
     implementation("org.json:json:20240303")
 
+    // Drive sign-in: the Identity AuthorizationClient, which hands back an OAuth
+    // access token for the drive.file scope. Pulled in only for that — the Drive
+    // REST calls themselves are hand-rolled in DriveClient.kt.
+    implementation("com.google.android.gms:play-services-auth:21.3.0")
+
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")

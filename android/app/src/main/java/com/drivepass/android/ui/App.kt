@@ -8,6 +8,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -58,7 +60,12 @@ fun DrivePassApp(vm: VaultViewModel) {
             AnimatedContent(
                 targetState = state,
                 contentKey = { it::class },
-                transitionSpec = { fadeIn() togetherWith fadeOut() },
+                // Locking cuts straight to the lock screen: a fade would leave
+                // the vault, and any open entry, on screen for its duration.
+                transitionSpec = {
+                    if (initialState is UiState.Unlocked) EnterTransition.None togetherWith ExitTransition.None
+                    else fadeIn() togetherWith fadeOut()
+                },
                 label = "screen",
             ) { s ->
                 when (s) {

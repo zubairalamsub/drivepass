@@ -214,7 +214,8 @@ fun PlainValue(text: String) {
  */
 fun relativePhrase(millis: Long): String {
     val now = System.currentTimeMillis()
-    if (now - millis in 0 until DateUtils.MINUTE_IN_MILLIS) return "just now"
+    // A future time only happens through clock skew between devices.
+    if (now - millis < DateUtils.MINUTE_IN_MILLIS) return "just now"
     val s = DateUtils.getRelativeTimeSpanString(
         millis,
         now,

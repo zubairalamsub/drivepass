@@ -65,10 +65,18 @@ object Totp {
         }
         if (keyBytes.isEmpty()) return null
 
-        val counter = (timeMillis / 1000) / period
-        val msg = ByteBuffer.allocate(8).putLong(counter).array()
-
         return try {
+            // Coerced, not trusted. `period` is a divisor, and these become
+            // caller-supplied the moment otpauth:// parameters are honoured —
+            // a period of 0 in a synced vault would otherwise throw straight
+            // out of a function documented never to. The desktop coerces the
+            // same way (`parseInt(...) || 30`).
+            val step = if (period > 0) period else 30
+            val width = digits.coerceIn(1, 10)
+            // Inside the try with everything else: this division is exactly
+            // the one that used to escape it.
+            val counter = (timeMillis / 1000) / step
+            val msg = ByteBuffer.allocate(8).putLong(counter).array()
             val mac = Mac.getInstance("HmacSHA1")
             mac.init(SecretKeySpec(keyBytes, "HmacSHA1"))
             val h = mac.doFinal(msg)
@@ -77,14 +85,33 @@ object Totp {
                 ((h[offset + 1].toInt() and 0xff) shl 16) or
                 ((h[offset + 2].toInt() and 0xff) shl 8) or
                 (h[offset + 3].toInt() and 0xff)
-            var mod = 1
-            repeat(digits) { mod *= 10 }
-            (binary % mod).toString().padStart(digits, '0')
+            // Long, not Int: 10^10 overflows an Int, and `digits` stops being
+            // a constant as soon as URIs are parsed properly.
+            var mod = 1L
+            repeat(width) { mod *= 10L }
+            (binary % mod).toString().padStart(width, '0')
         } catch (e: Exception) {
             null
         }
     }
 
-    fun secondsRemaining(period: Int = 30, timeMillis: Long = System.currentTimeMillis()): Int =
-        period - ((timeMillis / 1000) % period).toInt()
+    /** Whole seconds left in the step: 1..period, and never 0. */
+    fun secondsRemaining(period: Int = 30, timeMillis: Long = System.currentTimeMillis()): Int {
+        val step = if (period > 0) period else 30
+        return step - ((timeMillis / 1000) % step).toInt()
+    }
+
+    /**
+     * How much of the current step is left: 1f at its start, approaching 0f at
+     * its end.
+     *
+     * [secondsRemaining] is deliberately 1..period and never 0, which is right
+     * for the number on screen and wrong for a progress ring — that would step
+     * from full to 1/period and never reach empty. This is the continuous
+     * version, and unlike a hard-coded /30f it is correct for any period.
+     */
+    fun fractionRemaining(period: Int = 30, timeMillis: Long = System.currentTimeMillis()): Float {
+        val span = (if (period > 0) period else 30) * 1000L
+        return (span - Math.floorMod(timeMillis, span)) / span.toFloat()
+    }
 }

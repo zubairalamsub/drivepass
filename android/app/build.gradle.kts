@@ -52,6 +52,9 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
+    // LocalLifecycleOwner for the authenticator's tick. Present transitively via
+    // Compose UI, but it is load-bearing here so it is declared outright.
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
 
     val compose = "1.7.6"
     implementation("androidx.compose.ui:ui:$compose")

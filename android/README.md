@@ -25,8 +25,17 @@ re-encrypted or converted.
   changes from the extension show up.
 - **Browse and search** logins, cards, secure notes and passkeys, with filters
   for each type, favourites and 2FA.
+- **Authenticator** — a screen of its own, reached from the clock button in the
+  vault's toolbar, listing every entry that has a 2FA secret with its live code
+  and a countdown ring. Tap a row to copy the code. Codes are SHA-1, six digits,
+  thirty seconds: per-entry `otpauth://` parameters are parsed for the secret
+  only, which is also what the extension does, so the two agree.
 - **Copy** usernames, passwords, card details and live 2FA codes. Copies are
   marked sensitive and cleared from the clipboard after 30 seconds.
+- **Quick unlock** with a fingerprint or a DrivePass PIN, so reopening a vault
+  does not mean retyping the master password. The derived key is wrapped by a
+  hardware-backed Android Keystore key and never leaves the device; five wrong
+  PINs erases it and forces the master password.
 - **Auto-lock** after 5 minutes in the background. Screenshots and the Recents
   thumbnail are blocked.
 - Light and dark themes that follow the system, using the extension's colours

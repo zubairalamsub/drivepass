@@ -25,6 +25,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -178,11 +179,28 @@ fun DrivePassApp(vm: VaultViewModel) {
                         onPin = vm::unlockWithPin,
                         onBack = vm::closeVault,
                     )
-                    is UiState.Unlocked -> VaultScreen(
-                        state = s,
-                        onLock = vm::lock,
-                        onManageQuickUnlock = { showQuickUnlock = true },
-                    )
+                    is UiState.Unlocked -> {
+                        // Declared inside the branch on purpose: locking moves
+                        // the state out of Unlocked, AnimatedContent drops this
+                        // content, and the saveable slot goes with it — so no
+                        // navigation state ever describes a locked vault, and
+                        // re-unlocking always lands on the list.
+                        var onAuthenticator by rememberSaveable { mutableStateOf(false) }
+                        if (onAuthenticator) {
+                            AuthenticatorScreen(
+                                entries = s.entries,
+                                onBack = { onAuthenticator = false },
+                                onLock = vm::lock,
+                            )
+                        } else {
+                            VaultScreen(
+                                state = s,
+                                onLock = vm::lock,
+                                onManageQuickUnlock = { showQuickUnlock = true },
+                                onOpenAuthenticator = { onAuthenticator = true },
+                            )
+                        }
+                    }
                 }
             }
 

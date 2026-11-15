@@ -64,7 +64,12 @@ private enum class Filter(val label: String, val matches: (Entry) -> Boolean) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VaultScreen(state: UiState.Unlocked, onLock: () -> Unit, onManageQuickUnlock: () -> Unit) {
+fun VaultScreen(
+    state: UiState.Unlocked,
+    onLock: () -> Unit,
+    onManageQuickUnlock: () -> Unit,
+    onOpenAuthenticator: () -> Unit,
+) {
     // Query and filter hold no secrets, so they may survive process death.
     var query by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableStateOf(Filter.All) }
@@ -113,6 +118,11 @@ fun VaultScreen(state: UiState.Unlocked, onLock: () -> Unit, onManageQuickUnlock
                     }
                 },
                 actions = {
+                    // DpIcons.Clock is already the extension's own 2FA glyph,
+                    // so the two clients label this the same way.
+                    IconButton(onClick = onOpenAuthenticator) {
+                        Icon(DpIcons.Clock, contentDescription = "Authenticator")
+                    }
                     IconButton(onClick = onManageQuickUnlock) {
                         Icon(DpIcons.Shield, contentDescription = "Quick unlock settings")
                     }

@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.FileNotFoundException
 import javax.crypto.Cipher
@@ -72,6 +74,16 @@ sealed interface UiState {
         val offerQuickSetup: Boolean = false,
         /** What is enrolled right now, so the manage dialog stays in step. */
         val quick: QuickState = QuickState(),
+        /** A save is in flight; the editor and the list stay disabled. */
+        val saving: Boolean = false,
+        /** The last save failed. The edit is still in memory, unsaved. */
+        val saveError: String? = null,
+        /**
+         * Whether this vault can be edited at all. Decided at unlock, not at
+         * save: a disabled button is fine, "Saved!" followed by a
+         * SecurityException is not.
+         */
+        val writable: Boolean = false,
     ) : UiState
 }
 
@@ -108,6 +120,22 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
      */
     private var sessionKey: ByteArray? = null
 
+    /**
+     * The whole decrypted payload, not just the live entries the UI shows.
+     *
+     * Writing back from `entries` alone would drop every tombstone and the
+     * `purged` list with them, so deleted entries would resurrect the next time
+     * another device synced.
+     */
+    private var sessionData: VaultData? = null
+
+    /**
+     * One save at a time. Two overlapping saves each seal with a fresh IV, and
+     * whichever upload or write lands last wins — which can be the older
+     * payload.
+     */
+    private val writeMutex = Mutex()
+
     /** Which quick-unlock methods apply to [vault]; none for the demo. */
     private fun quickState(vault: OpenedVault): QuickState {
         if (vault.isDemo || !QuickUnlock.matches(prefs, vault.envelope)) return QuickState()
@@ -128,15 +156,20 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
     )
 
     /** Common tail of every successful unlock, whichever method got us here. */
-    private fun opened(vault: OpenedVault, key: ByteArray, entries: List<Entry>, offerSetup: Boolean) {
+    private fun opened(vault: OpenedVault, key: ByteArray, data: VaultData, offerSetup: Boolean) {
         sessionKey?.fill(0)
         sessionKey = key
-        (vault.source as? VaultSource.File)?.let { rememberRecent(it.uri, vault.name) }
+        sessionData = data
+        val file = vault.source as? VaultSource.File
+        file?.let { rememberRecent(it.uri, vault.name) }
         _state.value = UiState.Unlocked(
             vault,
-            entries,
+            VaultModel.liveSorted(data),
             offerQuickSetup = offerSetup && !vault.isDemo && !QuickUnlock.isSetUp(prefs),
             quick = quickStatusNow(),
+            // Editing is wired to the picker path only for now: a Drive vault
+            // needs the read-modify-write protocol, which is the next slice.
+            writable = file != null && VaultWriter.isWritable(getApplication(), file.uri),
         )
     }
 
@@ -204,7 +237,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching {
                     val key = VaultCrypto.deriveKey(password, s.vault.envelope.salt, s.vault.envelope.iterations)
                     try {
-                        key to VaultModel.liveSorted(VaultModel.parse(VaultCrypto.decrypt(key, s.vault.envelope)))
+                        key to VaultModel.parse(VaultCrypto.decrypt(key, s.vault.envelope))
                     } catch (e: Throwable) {
                         // Only hold on to the key if it actually opened the vault.
                         key.fill(0)
@@ -215,7 +248,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             result.fold(
-                onSuccess = { (key, entries) -> opened(s.vault, key, entries, offerSetup = true) },
+                onSuccess = { (key, data) -> opened(s.vault, key, data, offerSetup = true) },
                 onFailure = { e ->
                     _state.value = s.copy(
                         busy = false,
@@ -236,6 +269,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         autoLockJob?.cancel()
         sessionKey?.fill(0)
         sessionKey = null
+        sessionData = null
         val vault = when (val s = _state.value) {
             is UiState.Unlocked -> s.vault
             is UiState.Unlock -> s.vault
@@ -266,6 +300,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         autoLockJob?.cancel()
         sessionKey?.fill(0)
         sessionKey = null
+        sessionData = null
         _state.value = UiState.Welcome(loadRecent())
     }
 
@@ -292,6 +327,86 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
             lock()
         }
         backgroundedAt = 0L
+    }
+
+    // ---- Editing -------------------------------------------------------------
+
+    fun saveEntry(draft: EntryDraft) = mutate { VaultModel.upsert(it, draft) }
+
+    fun deleteEntry(id: String) = mutate { VaultModel.softDelete(it, id) }
+
+    fun undoDelete(id: String) = mutate { VaultModel.restore(it, id) }
+
+    fun dismissSaveError() {
+        (_state.value as? UiState.Unlocked)?.let { _state.value = it.copy(saveError = null) }
+    }
+
+    /**
+     * Apply [change] to the decrypted payload, re-seal, and write it back.
+     *
+     * Order is the point: the complete sealed bytes exist before the file is
+     * opened, so a failure in the seal leaves the file untouched rather than
+     * truncated with no replacement content in hand.
+     */
+    private fun mutate(change: (VaultData) -> VaultData) {
+        val s = _state.value as? UiState.Unlocked ?: return
+        if (s.saving || !s.writable) return
+        val source = s.vault.source as? VaultSource.File ?: return
+        val data = sessionData ?: return
+        // A copy: auto-lock zeroes sessionKey, and if it fired mid-seal this
+        // would otherwise encrypt the vault under a key of zeroes.
+        val key = sessionKey?.copyOf() ?: return
+
+        _state.value = s.copy(saving = true, saveError = null)
+        viewModelScope.launch {
+            val result = writeMutex.withLock {
+                withContext(Dispatchers.IO) {
+                    try {
+                        runCatching {
+                            val updated = change(data)
+                            val envelope = VaultCrypto.seal(
+                                key,
+                                VaultModel.serialize(updated),
+                                s.vault.envelope,
+                            )
+                            VaultWriter.write(
+                                getApplication(),
+                                source.uri,
+                                VaultCrypto.envelopeToJson(envelope),
+                            )
+                            updated to envelope
+                        }
+                    } finally {
+                        key.fill(0)
+                    }
+                }
+            }
+            result.fold(
+                onSuccess = { (updated, envelope) ->
+                    // If the vault locked while the write ran, the file is
+                    // saved but nothing decrypted may be kept.
+                    val now = _state.value as? UiState.Unlocked ?: return@fold
+                    sessionData = updated
+                    _state.value = now.copy(
+                        // The envelope changed — fresh IV, fresh ciphertext.
+                        // Keeping the old one would make the next re-read and
+                        // any quick-unlock check disagree with the file.
+                        vault = now.vault.copy(envelope = envelope),
+                        entries = VaultModel.liveSorted(updated),
+                        saving = false,
+                        saveError = null,
+                    )
+                },
+                onFailure = { e ->
+                    // sessionData is untouched, so the in-memory vault still
+                    // matches the file. The user's typing is not lost either:
+                    // the editor stays open on its draft until a save succeeds,
+                    // so a retry is one tap.
+                    val now = _state.value as? UiState.Unlocked ?: return@fold
+                    _state.value = now.copy(saving = false, saveError = describe(e))
+                },
+            )
+        }
     }
 
     // ---- Quick unlock --------------------------------------------------------
@@ -343,7 +458,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         val result = withContext(Dispatchers.Default) {
             runCatching {
                 try {
-                    VaultModel.liveSorted(VaultModel.parse(VaultCrypto.decrypt(key, s.vault.envelope)))
+                    VaultModel.parse(VaultCrypto.decrypt(key, s.vault.envelope))
                 } catch (e: Throwable) {
                     key.fill(0)
                     throw e
@@ -351,7 +466,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         result.fold(
-            onSuccess = { entries -> opened(s.vault, key, entries, offerSetup = false) },
+            onSuccess = { data -> opened(s.vault, key, data, offerSetup = false) },
             onFailure = { e ->
                 // A stored key that no longer opens this vault is stale, not a
                 // typo — the master password must have changed. Stop offering it.
@@ -465,9 +580,14 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
     private fun rememberRecent(uri: Uri, name: String) {
         // Not every provider grants persistable access; without it the recent
         // entry still works until the device restarts, which is fine.
-        runCatching {
-            getApplication<Application>().contentResolver
-                .takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        //
+        // Ask for write as well, falling back to read: whether the write grant
+        // exists decides whether editing is offered at all, and that has to be
+        // settled at unlock rather than discovered at save.
+        val cr = getApplication<Application>().contentResolver
+        val readWrite = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        if (runCatching { cr.takePersistableUriPermission(uri, readWrite) }.isFailure) {
+            runCatching { cr.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         }
         prefs.edit()
             .putString(KEY_URI, uri.toString())
@@ -478,9 +598,13 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
 
     fun forgetRecent() {
         loadRecent()?.let { r ->
-            runCatching {
-                getApplication<Application>().contentResolver
-                    .releasePersistableUriPermission(r.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            // Release whichever combination was actually taken: releasing a
+            // flag that was never granted throws, so try both and ignore the
+            // one that does not apply.
+            val cr = getApplication<Application>().contentResolver
+            val readWrite = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            if (runCatching { cr.releasePersistableUriPermission(r.uri, readWrite) }.isFailure) {
+                runCatching { cr.releasePersistableUriPermission(r.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             }
         }
         prefs.edit().remove(KEY_URI).remove(KEY_NAME).remove(KEY_OPENED).apply()
@@ -533,6 +657,10 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
                 else "Wrong PIN. ${e.attemptsLeft} ${if (e.attemptsLeft == 1) "try" else "tries"} left."
             is QuickUnlock.BiometricsChanged ->
                 "Fingerprints on this device changed, so quick unlock was reset. Unlock with your master password to set it up again."
+            is VaultWriter.NotWritable ->
+                "DrivePass can't write to that file. Pick it again with Choose vault file to grant write access."
+            is VaultWriter.VerifyFailed ->
+                "${e.message} The previous version was backed up on this device."
             is QuickUnlock.WrongVault ->
                 "Quick unlock was set up for a different vault. Use your master password."
             is FileNotFoundException -> "That file couldn't be opened. It may have been moved or deleted."

@@ -1,6 +1,6 @@
 # DrivePass for Android (preview)
 
-A read-only Android companion to the Chrome extension. It opens the same
+An Android companion to the Chrome extension. It opens the same
 `vault.enc` the extension keeps in your Google Drive and decrypts it on the
 device. It uses the same PBKDF2-SHA256 → AES-256-GCM scheme, so nothing is
 re-encrypted or converted.
@@ -41,7 +41,23 @@ re-encrypted or converted.
 - Light and dark themes that follow the system, using the extension's colours
   and icons.
 
-It cannot add or edit entries yet, and it does not provide Android autofill.
+- **Add, edit and delete** logins, cards and notes in a vault opened with
+  *Choose vault file*. Every save re-encrypts with a fresh IV, writes with
+  truncation and fsync, then reads the file back and re-parses it before
+  reporting success. The previous three versions are kept as encrypted backups
+  in app storage, because SAF has no atomic replace. Deletes are soft: the entry
+  moves to the extension's Trash. Passkeys can't be edited here.
+
+  **A vault picked from Google Drive opens read-only**, whichever way it was
+  opened. Through the picker, the Drive app's document provider has
+  inconsistent write support and uploads with no merge, so a bad or concurrent
+  write would corrupt the file the extension syncs. To edit, work on a copy
+  saved to the device. Editing a Drive vault properly needs the extension's
+  merge-before-write protocol over the REST API, which is not built yet. Hard
+  delete is also not offered; the extension owns the Trash. Editing the same entry on two devices is last-write-wins on each
+  device's clock, exactly as it is between two copies of the extension.
+
+It does not provide Android autofill.
 
 ## Building
 

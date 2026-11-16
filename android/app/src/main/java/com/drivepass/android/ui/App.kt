@@ -198,6 +198,10 @@ fun DrivePassApp(vm: VaultViewModel) {
                                 onLock = vm::lock,
                                 onManageQuickUnlock = { showQuickUnlock = true },
                                 onOpenAuthenticator = { onAuthenticator = true },
+                                onSaveEntry = vm::saveEntry,
+                                onDeleteEntry = vm::deleteEntry,
+                                onUndoDelete = vm::undoDelete,
+                                onDismissSaveError = vm::dismissSaveError,
                             )
                         }
                     }

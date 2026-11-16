@@ -25,7 +25,14 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import com.drivepass.android.EntryDraft
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -69,11 +76,60 @@ fun VaultScreen(
     onLock: () -> Unit,
     onManageQuickUnlock: () -> Unit,
     onOpenAuthenticator: () -> Unit,
+    onSaveEntry: (EntryDraft) -> Unit = {},
+    onDeleteEntry: (String) -> Unit = {},
+    onUndoDelete: (String) -> Unit = {},
+    onDismissSaveError: () -> Unit = {},
 ) {
     // Query and filter hold no secrets, so they may survive process death.
     var query by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableStateOf(Filter.All) }
     var openId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    // Plain remember, never rememberSaveable: the draft holds a password, and
+    // saved-instance state goes to disk.
+    var editing by remember { mutableStateOf<EntryDraft?>(null) }
+    var awaitingSave by remember { mutableStateOf(false) }
+    var awaitingDelete by remember { mutableStateOf<String?>(null) }
+    val snackbar = remember { SnackbarHostState() }
+
+    // Every save resolves here. The editor closes only on success, so a failed
+    // write leaves the user looking at their draft rather than losing it; and
+    // "Moved to Trash" is offered only once the delete is actually on disk.
+    LaunchedEffect(state.saving) {
+        if (state.saving) return@LaunchedEffect
+        if (awaitingSave) {
+            awaitingSave = false
+            if (state.saveError == null) editing = null
+        }
+        awaitingDelete?.let { id ->
+            awaitingDelete = null
+            if (state.saveError == null) {
+                val r = snackbar.showSnackbar("Moved to Trash", actionLabel = "Undo", duration = SnackbarDuration.Short)
+                if (r == SnackbarResult.ActionPerformed) onUndoDelete(id)
+            }
+        }
+    }
+    // Errors from outside the editor (a failed delete or undo) surface here;
+    // the editor shows its own inline.
+    LaunchedEffect(state.saveError, editing) {
+        val err = state.saveError ?: return@LaunchedEffect
+        if (editing == null) {
+            snackbar.showSnackbar(err, withDismissAction = true, duration = SnackbarDuration.Long)
+            onDismissSaveError()
+        }
+    }
+
+    editing?.let { draft ->
+        EntryEditor(
+            initial = draft,
+            saving = state.saving,
+            error = if (state.saving) null else state.saveError,
+            onSave = { awaitingSave = true; onSaveEntry(it) },
+            onCancel = { editing = null; onDismissSaveError() },
+        )
+        return
+    }
     val focus = LocalFocusManager.current
 
     // Back clears search and filter before it leaves the app.
@@ -102,6 +158,16 @@ fun VaultScreen(
 
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
+        snackbarHost = { SnackbarHost(snackbar) },
+        floatingActionButton = {
+            // Hidden, not disabled, when the vault cannot be written: a button
+            // that only ever explains why it does nothing is noise.
+            if (state.writable && !state.saving) {
+                ExtendedFloatingActionButton(onClick = { onDismissSaveError(); editing = EntryDraft() }) {
+                    Text("New item")
+                }
+            }
+        },
         topBar = {
             TopAppBar(
                 scrollBehavior = scroll,
@@ -135,6 +201,7 @@ fun VaultScreen(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            if (state.saving) LinearProgressIndicator(Modifier.fillMaxWidth())
             SearchField(query, onChange = { query = it })
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp),
@@ -182,7 +249,20 @@ fun VaultScreen(
     }
 
     openId?.let { id ->
-        state.entries.firstOrNull { it.id == id }?.let { EntrySheet(it) { openId = null } }
+        state.entries.firstOrNull { it.id == id }?.let { entry ->
+            EntrySheet(
+                entry = entry,
+                onDismiss = { openId = null },
+                onEdit = if (state.writable) {
+                    { openId = null; onDismissSaveError(); editing = EntryDraft.of(entry) }
+                } else null,
+                onDelete = if (state.writable) {
+                    // Close the sheet explicitly: after the delete the lookup
+                    // above finds nothing and the sheet would just vanish.
+                    { openId = null; awaitingDelete = entry.id; onDeleteEntry(entry.id) }
+                } else null,
+            )
+        }
     }
 }
 

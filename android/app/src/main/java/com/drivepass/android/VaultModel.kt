@@ -121,7 +121,48 @@ data class VaultData(
     val root: JSONObject = JSONObject(),
 )
 
+/**
+ * The fields an editor may change.
+ *
+ * Deliberately NOT the whole [Entry]: `history`, `passkey` and anything a newer
+ * desktop release added are carried over from the existing entry rather than
+ * round-tripped through the UI, so the editor cannot drop what it cannot show.
+ *
+ * Never put this in rememberSaveable — it holds a password, and saved-instance
+ * state is written to disk by the system.
+ */
+data class EntryDraft(
+    val id: String? = null,
+    val type: String = "login",
+    val name: String = "",
+    val url: String = "",
+    val username: String = "",
+    val password: String = "",
+    val totp: String = "",
+    val notes: String = "",
+    val favorite: Boolean = false,
+    val cardNumber: String = "",
+    val cardHolder: String = "",
+    val cardExpMonth: String = "",
+    val cardExpYear: String = "",
+    val cardCvv: String = "",
+) {
+    companion object {
+        /** Prefill from an existing entry, for editing. */
+        fun of(e: Entry) = EntryDraft(
+            id = e.id, type = e.type, name = e.name, url = e.url,
+            username = e.username, password = e.password, totp = e.totp,
+            notes = e.notes, favorite = e.favorite,
+            cardNumber = e.cardNumber, cardHolder = e.cardHolder,
+            cardExpMonth = e.cardExpMonth, cardExpYear = e.cardExpYear, cardCvv = e.cardCvv,
+        )
+    }
+}
+
 object VaultModel {
+
+    /** What the extension keeps; see handleSaveEntry in the service worker. */
+    private const val MAX_HISTORY = 10
 
     fun parse(plaintextJson: String): VaultData {
         val root = JSONObject(plaintextJson)
@@ -147,6 +188,103 @@ object VaultModel {
             root.put("purged", JSONArray(data.purged))
         }
         return root.toString()
+    }
+
+    /**
+     * Add or update an entry, mirroring handleSaveEntry in the extension's
+     * service worker.
+     *
+     * The old password is pushed onto `history` only when the entry already had
+     * one, the draft has one, and they differ — the same three conditions the
+     * desktop checks. History is capped at [MAX_HISTORY], oldest dropped.
+     *
+     * Saving un-deletes: an edit sets deletedAt back to null, which is what the
+     * desktop does and what makes "restore by editing" work.
+     */
+    fun upsert(data: VaultData, draft: EntryDraft): VaultData {
+        val now = System.currentTimeMillis()
+        val existing = draft.id?.let { id -> data.entries.firstOrNull { it.id == id } }
+
+        // Start from the existing JSON so history, passkey.credentialId and any
+        // unmodelled field survive an edit made here.
+        val base = existing?.raw?.let { JSONObject(it.toString() ) } ?: JSONObject().apply {
+            put("createdAt", now)
+            put("history", JSONArray())
+        }
+
+        if (existing != null &&
+            draft.password.isNotEmpty() &&
+            existing.password.isNotEmpty() &&
+            draft.password != existing.password
+        ) {
+            val previous = base.optJSONArray("history") ?: JSONArray()
+            val rolled = JSONArray().put(
+                JSONObject()
+                    .put("password", existing.password)
+                    .put("updatedAt", if (existing.updatedAt != 0L) existing.updatedAt else now),
+            )
+            for (i in 0 until minOf(previous.length(), MAX_HISTORY - 1)) rolled.put(previous.get(i))
+            base.put("history", rolled)
+        }
+
+        val merged = Entry(
+            id = existing?.id ?: draft.id?.takeIf { it.isNotEmpty() } ?: java.util.UUID.randomUUID().toString(),
+            type = draft.type,
+            name = draft.name,
+            url = draft.url,
+            username = draft.username,
+            password = draft.password,
+            totp = draft.totp,
+            notes = draft.notes,
+            favorite = draft.favorite,
+            createdAt = base.optLong("createdAt").takeIf { it != 0L } ?: now,
+            updatedAt = now,
+            deletedAt = null,
+            cardNumber = draft.cardNumber,
+            cardHolder = draft.cardHolder,
+            cardExpMonth = draft.cardExpMonth,
+            cardExpYear = draft.cardExpYear,
+            cardCvv = draft.cardCvv,
+            // Not editable here, so carried through rather than blanked.
+            passkeyUserName = existing?.passkeyUserName.orEmpty(),
+            passkeyRpId = existing?.passkeyRpId.orEmpty(),
+            tags = existing?.tags.orEmpty(),
+            raw = base,
+        )
+        val entry = fromJson(merged.toJson())
+
+        val entries = if (existing == null) data.entries + entry
+        else data.entries.map { if (it.id == entry.id) entry else it }
+        return data.copy(entries = entries)
+    }
+
+    /**
+     * Soft delete: a tombstone, never a removal.
+     *
+     * Hard delete is `purgeEntry` on the desktop, which also appends to the
+     * `purged` list — an irreversible cross-device instruction. This client does
+     * not do that; the extension owns the Trash.
+     */
+    fun softDelete(data: VaultData, id: String): VaultData = stamp(data, id) { o, now ->
+        o.put("deletedAt", now)
+    }
+
+    /** Undo a soft delete, for the Undo affordance after one. */
+    fun restore(data: VaultData, id: String): VaultData = stamp(data, id) { o, _ ->
+        o.put("deletedAt", JSONObject.NULL)
+    }
+
+    private inline fun stamp(data: VaultData, id: String, change: (JSONObject, Long) -> Unit): VaultData {
+        val now = System.currentTimeMillis()
+        val entries = data.entries.map { e ->
+            if (e.id != id) e else {
+                val o = JSONObject(e.raw.toString())
+                change(o, now)
+                o.put("updatedAt", now)
+                fromJson(o)
+            }
+        }
+        return data.copy(entries = entries)
     }
 
     /**

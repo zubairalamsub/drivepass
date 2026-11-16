@@ -19,8 +19,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -53,7 +56,12 @@ private const val MASK = "••••••••••"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EntrySheet(entry: Entry, onDismiss: () -> Unit) {
+fun EntrySheet(
+    entry: Entry,
+    onDismiss: () -> Unit,
+    onEdit: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null,
+) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -67,6 +75,7 @@ fun EntrySheet(entry: Entry, onDismiss: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Header(entry)
+            if (onEdit != null || onDelete != null) Actions(entry, onEdit, onDelete)
             when (entry.type) {
                 "card" -> CardDetails(entry)
                 "passkey" -> PasskeyDetails(entry)
@@ -107,6 +116,42 @@ private fun Header(entry: Entry) {
                 modifier = Modifier.size(22.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun Actions(entry: Entry, onEdit: (() -> Unit)?, onDelete: (() -> Unit)?) {
+    var confirmDelete by remember { mutableStateOf(false) }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Not for passkeys: the field that makes one work, credentialId, is
+        // invisible to this model, so the editable part is the part that
+        // doesn't matter.
+        if (onEdit != null && entry.type != "passkey") {
+            OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f)) { Text("Edit") }
+        }
+        if (onDelete != null) {
+            OutlinedButton(onClick = { confirmDelete = true }, modifier = Modifier.weight(1f)) {
+                Text("Delete", color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+    if (confirmDelete && onDelete != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Move to Trash?") },
+            text = {
+                // A soft delete: the extension owns the Trash, and a hard
+                // delete from here would be an irreversible instruction to
+                // every synced device.
+                Text("“${entry.title()}” moves to the Trash. Restore it from the DrivePass extension.")
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmDelete = false; onDelete() }) {
+                    Text("Move to Trash", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
     }
 }
 

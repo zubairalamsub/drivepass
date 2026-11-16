@@ -48,9 +48,78 @@ data class Entry(
         "passkey" -> passkeyUserName.ifEmpty { "Passkey" }
         else -> username.ifEmpty { url }
     }
+
+    /**
+     * Back to JSON, written OVER a deep copy of [raw] rather than built from
+     * scratch.
+     *
+     * This is the whole reason writes are safe. This model does not read
+     * `history`, does not read `passkey.credentialId`, and knows nothing about
+     * fields a newer desktop release may have added. Constructing a fresh
+     * object from the Kotlin properties would silently delete all of them —
+     * killing passkeys and losing password history on the first edit made from
+     * the phone. Copying first and overwriting only what this model owns means
+     * anything unmodelled survives untouched.
+     *
+     * Nested objects are mutated in place for the same reason: replacing
+     * `card` or `passkey` wholesale would drop their unmodelled keys.
+     *
+     * One deliberate normalisation: [tags] drops blank entries at parse time,
+     * so blank tags do not survive a round trip. Nothing produces them.
+     */
+    fun toJson(): JSONObject {
+        val o = JSONObject(raw.toString())
+        o.put("id", id)
+        o.put("type", type)
+        o.put("name", name)
+        o.put("url", url)
+        o.put("username", username)
+        o.put("password", password)
+        o.put("totp", totp)
+        o.put("notes", notes)
+        o.put("favorite", favorite)
+        o.put("createdAt", createdAt)
+        o.put("updatedAt", updatedAt)
+        // An explicit JSON null, not an absent key: the extension writes
+        // `deletedAt: null` for live entries and reads it with a null check.
+        o.put("deletedAt", deletedAt ?: JSONObject.NULL)
+
+        val anyCard = cardNumber.isNotEmpty() || cardHolder.isNotEmpty() ||
+            cardExpMonth.isNotEmpty() || cardExpYear.isNotEmpty() || cardCvv.isNotEmpty()
+        if (o.has("card") || anyCard) {
+            val card = o.optJSONObject("card") ?: JSONObject().also { o.put("card", it) }
+            card.put("number", cardNumber)
+            card.put("holder", cardHolder)
+            card.put("expMonth", cardExpMonth)
+            card.put("expYear", cardExpYear)
+            card.put("cvv", cardCvv)
+        }
+
+        if (o.has("passkey") || passkeyUserName.isNotEmpty() || passkeyRpId.isNotEmpty()) {
+            val passkey = o.optJSONObject("passkey") ?: JSONObject().also { o.put("passkey", it) }
+            // credentialId is deliberately NOT written: it is not in this model,
+            // and the deep copy already carries whatever was there.
+            passkey.put("userName", passkeyUserName)
+            passkey.put("rpId", passkeyRpId)
+        }
+
+        if (o.has("tags") || tags.isNotEmpty()) o.put("tags", JSONArray(tags))
+        return o
+    }
 }
 
-data class VaultData(val entries: List<Entry>, val purged: List<String>)
+/**
+ * A decrypted vault payload.
+ *
+ * [root] is the payload object as it was parsed, kept so that serialising back
+ * preserves top-level keys this client does not model. Note that data-class
+ * equality compares it by reference; nothing relies on comparing VaultData.
+ */
+data class VaultData(
+    val entries: List<Entry>,
+    val purged: List<String>,
+    val root: JSONObject = JSONObject(),
+)
 
 object VaultModel {
 
@@ -62,7 +131,56 @@ object VaultModel {
         }
         val purgedArr = root.optJSONArray("purged") ?: JSONArray()
         val purged = (0 until purgedArr.length()).map { purgedArr.getString(it) }
-        return VaultData(entries, purged)
+        return VaultData(entries, purged, root)
+    }
+
+    /**
+     * The payload back to JSON, preserving unmodelled top-level keys.
+     *
+     * Works on a deep copy, so serialising never mutates the parsed data — a
+     * save that fails partway must leave the in-memory vault exactly as it was.
+     */
+    fun serialize(data: VaultData): String {
+        val root = JSONObject(data.root.toString())
+        root.put("entries", JSONArray().apply { data.entries.forEach { put(it.toJson()) } })
+        if (root.has("purged") || data.purged.isNotEmpty()) {
+            root.put("purged", JSONArray(data.purged))
+        }
+        return root.toString()
+    }
+
+    /**
+     * Merge two decrypted vaults by entry id, last-write-wins on updatedAt.
+     *
+     * A direct port of mergeVaults() in src/lib/vault.js. Two details there are
+     * load-bearing and easy to get wrong:
+     *
+     *  - The comparison is `>=`, so LOCAL WINS TIES. Reversing it would make
+     *    the remote win whenever two clocks happen to agree.
+     *  - Purged ids are removed from the result AFTER merging, so a hard delete
+     *    on either side cannot be undone by the other side still holding the
+     *    entry.
+     *
+     * Insertion order follows the JS Map: remote first, then local-only entries
+     * appended, with an overwrite keeping the original position.
+     *
+     * One deliberate divergence: the extension returns a bare
+     * `{entries, purged}` and so discards unmodelled top-level keys. This keeps
+     * [local]'s root instead, which is strictly safer and reads identically.
+     */
+    fun merge(local: VaultData, remote: VaultData): VaultData {
+        val purged = LinkedHashSet<String>().apply {
+            addAll(local.purged)
+            addAll(remote.purged)
+        }
+        val byId = LinkedHashMap<String, Entry>()
+        for (e in remote.entries) byId[e.id] = e
+        for (e in local.entries) {
+            val existing = byId[e.id]
+            if (existing == null || e.updatedAt >= existing.updatedAt) byId[e.id] = e
+        }
+        for (id in purged) byId.remove(id)
+        return VaultData(byId.values.toList(), purged.toList(), local.root)
     }
 
     private fun fromJson(o: JSONObject): Entry {

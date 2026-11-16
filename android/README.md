@@ -37,7 +37,9 @@ re-encrypted or converted.
   hardware-backed Android Keystore key and never leaves the device; five wrong
   PINs erases it and forces the master password.
 - **Auto-lock** after 5 minutes in the background. Screenshots and the Recents
-  thumbnail are blocked.
+  thumbnail are blocked. An edit in progress when the vault locks is sealed
+  under the vault key rather than kept readable, and reopens after the next
+  unlock of the same vault.
 - Light and dark themes that follow the system, using the extension's colours
   and icons.
 

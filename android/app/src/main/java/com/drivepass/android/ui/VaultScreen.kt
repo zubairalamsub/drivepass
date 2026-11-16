@@ -80,6 +80,9 @@ fun VaultScreen(
     onDeleteEntry: (String) -> Unit = {},
     onUndoDelete: (String) -> Unit = {},
     onDismissSaveError: () -> Unit = {},
+    onEditing: (initial: EntryDraft, current: EntryDraft) -> Unit = { _, _ -> },
+    onEditingDone: () -> Unit = {},
+    onRestoredEditConsumed: () -> Unit = {},
 ) {
     // Query and filter hold no secrets, so they may survive process death.
     var query by rememberSaveable { mutableStateOf("") }
@@ -89,7 +92,23 @@ fun VaultScreen(
     // Plain remember, never rememberSaveable: the draft holds a password, and
     // saved-instance state goes to disk.
     var editing by remember { mutableStateOf<EntryDraft?>(null) }
+    var restoredDraft by remember { mutableStateOf<EntryDraft?>(null) }
     var awaitingSave by remember { mutableStateOf(false) }
+
+    fun closeEditor() {
+        editing = null
+        restoredDraft = null
+        onEditingDone()
+    }
+
+    // An edit that auto-lock interrupted comes back with the unlock. Locking
+    // disposed this whole screen, so the editor reopens on a fresh composition.
+    LaunchedEffect(state.restoredEdit) {
+        val r = state.restoredEdit ?: return@LaunchedEffect
+        editing = r.initial
+        restoredDraft = r.current
+        onRestoredEditConsumed()
+    }
     var awaitingDelete by remember { mutableStateOf<String?>(null) }
     val snackbar = remember { SnackbarHostState() }
 
@@ -100,7 +119,7 @@ fun VaultScreen(
         if (state.saving) return@LaunchedEffect
         if (awaitingSave) {
             awaitingSave = false
-            if (state.saveError == null) editing = null
+            if (state.saveError == null) closeEditor()
         }
         awaitingDelete?.let { id ->
             awaitingDelete = null
@@ -123,10 +142,12 @@ fun VaultScreen(
     editing?.let { draft ->
         EntryEditor(
             initial = draft,
+            restored = restoredDraft,
             saving = state.saving,
             error = if (state.saving) null else state.saveError,
+            onDraftChange = { onEditing(draft, it) },
             onSave = { awaitingSave = true; onSaveEntry(it) },
-            onCancel = { editing = null; onDismissSaveError() },
+            onCancel = { closeEditor(); onDismissSaveError() },
         )
         return
     }

@@ -84,6 +84,8 @@ sealed interface UiState {
          * SecurityException is not.
          */
         val writable: Boolean = false,
+        /** An edit interrupted by auto-lock, recovered by this unlock. */
+        val restoredEdit: EditSession? = null,
     ) : UiState
 }
 
@@ -136,6 +138,27 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val writeMutex = Mutex()
 
+    /** The open editor's state, in plaintext — only ever while unlocked. */
+    private var editSession: EditSession? = null
+
+    /**
+     * An unsaved edit that auto-lock interrupted, sealed under the vault key.
+     *
+     * The tension this resolves: a draft is decrypted material — often a
+     * password mid-typing — so keeping it readable past the lock would break
+     * the app's one rule. But blocking auto-lock while an editor is open would
+     * hold the vault unlocked indefinitely in the background. Losing the typing
+     * silently was the third option, and the worst.
+     *
+     * So the draft is AES-GCM sealed with the session key in the moment before
+     * that key is zeroed. Nothing readable survives the lock, and getting the
+     * draft back requires unlocking the same vault again — the right gate.
+     * Memory only: process death loses it, which is the correct trade.
+     */
+    private class StashedEdit(val envelope: VaultEnvelope, val source: VaultSource)
+
+    private var stashedEdit: StashedEdit? = null
+
     /** Which quick-unlock methods apply to [vault]; none for the demo. */
     private fun quickState(vault: OpenedVault): QuickState {
         if (vault.isDemo || !QuickUnlock.matches(prefs, vault.envelope)) return QuickState()
@@ -162,15 +185,59 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         sessionData = data
         val file = vault.source as? VaultSource.File
         file?.let { rememberRecent(it.uri, vault.name) }
+        // Editing is wired to the picker path only for now: a Drive vault
+        // needs the read-modify-write protocol, which is the next slice.
+        val writable = file != null && VaultWriter.isWritable(getApplication(), file.uri)
+        // Only offer a recovered edit somewhere it can actually be saved —
+        // otherwise Save would do nothing and the editor would sit there.
+        val restored = takeStashedEdit(vault, key)?.takeIf { writable }
         _state.value = UiState.Unlocked(
             vault,
             VaultModel.liveSorted(data),
-            offerQuickSetup = offerSetup && !vault.isDemo && !QuickUnlock.isSetUp(prefs),
+            // Don't stack the quick-unlock prompt on top of a recovered edit.
+            offerQuickSetup = restored == null && offerSetup && !vault.isDemo && !QuickUnlock.isSetUp(prefs),
             quick = quickStatusNow(),
-            // Editing is wired to the picker path only for now: a Drive vault
-            // needs the read-modify-write protocol, which is the next slice.
-            writable = file != null && VaultWriter.isWritable(getApplication(), file.uri),
+            writable = writable,
+            restoredEdit = restored,
         )
+    }
+
+    /** Seal a dirty edit under the vault key, in the moment before it is zeroed. */
+    private fun stashEdit() {
+        val edit = editSession
+        editSession = null
+        val key = sessionKey ?: return
+        val s = _state.value as? UiState.Unlocked ?: return
+        if (edit == null || !edit.dirty) return
+        stashedEdit = runCatching {
+            StashedEdit(VaultCrypto.seal(key, edit.toJson(), s.vault.envelope), s.vault.source)
+        }.getOrNull()
+    }
+
+    /** Recover a stashed edit if — and only if — it belongs to this vault and key. */
+    private fun takeStashedEdit(vault: OpenedVault, key: ByteArray): EditSession? {
+        val stash = stashedEdit ?: return null
+        stashedEdit = null
+        // A different vault cannot have this edit. The same vault under a
+        // changed master password has a different key, so the decrypt below
+        // fails — and dropping the edit is the only correct outcome there too.
+        if (stash.source != vault.source) return null
+        return runCatching { EditSession.fromJson(VaultCrypto.decrypt(key, stash.envelope)) }.getOrNull()
+    }
+
+    /** The editor reports every change, so a lock always finds the latest. */
+    fun editing(initial: EntryDraft, current: EntryDraft) {
+        if (_state.value is UiState.Unlocked) editSession = EditSession(initial, current)
+    }
+
+    /** Saved or cancelled: nothing left to protect. */
+    fun editingDone() {
+        editSession = null
+    }
+
+    fun restoredEditConsumed() {
+        val s = _state.value as? UiState.Unlocked ?: return
+        if (s.restoredEdit != null) _state.value = s.copy(restoredEdit = null)
     }
 
     // ---- Opening a file ------------------------------------------------------
@@ -267,6 +334,8 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun lock() {
         autoLockJob?.cancel()
+        // Must run before the key is zeroed — it needs the key to seal with.
+        stashEdit()
         sessionKey?.fill(0)
         sessionKey = null
         sessionData = null
@@ -298,6 +367,10 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeVault() {
         autoLockJob?.cancel()
+        // Leaving the vault is a deliberate choice, unlike a lock: anything
+        // stashed for it goes too.
+        editSession = null
+        stashedEdit = null
         sessionKey?.fill(0)
         sessionKey = null
         sessionData = null

@@ -147,6 +147,24 @@ data class EntryDraft(
     val cardExpYear: String = "",
     val cardCvv: String = "",
 ) {
+    /** For sealing an unsaved edit across an auto-lock; see [EditSession]. */
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("id", id ?: JSONObject.NULL)
+        put("type", type)
+        put("name", name)
+        put("url", url)
+        put("username", username)
+        put("password", password)
+        put("totp", totp)
+        put("notes", notes)
+        put("favorite", favorite)
+        put("cardNumber", cardNumber)
+        put("cardHolder", cardHolder)
+        put("cardExpMonth", cardExpMonth)
+        put("cardExpYear", cardExpYear)
+        put("cardCvv", cardCvv)
+    }
+
     companion object {
         /** Prefill from an existing entry, for editing. */
         fun of(e: Entry) = EntryDraft(
@@ -156,6 +174,47 @@ data class EntryDraft(
             cardNumber = e.cardNumber, cardHolder = e.cardHolder,
             cardExpMonth = e.cardExpMonth, cardExpYear = e.cardExpYear, cardCvv = e.cardCvv,
         )
+
+        fun fromJson(o: JSONObject) = EntryDraft(
+            id = if (o.isNull("id")) null else o.optString("id"),
+            type = o.optString("type", "login"),
+            name = o.optString("name"),
+            url = o.optString("url"),
+            username = o.optString("username"),
+            password = o.optString("password"),
+            totp = o.optString("totp"),
+            notes = o.optString("notes"),
+            favorite = o.optBoolean("favorite"),
+            cardNumber = o.optString("cardNumber"),
+            cardHolder = o.optString("cardHolder"),
+            cardExpMonth = o.optString("cardExpMonth"),
+            cardExpYear = o.optString("cardExpYear"),
+            cardCvv = o.optString("cardCvv"),
+        )
+    }
+}
+
+/**
+ * An open editor: what it started from, and what it holds now.
+ *
+ * Both halves are kept so a restored editor still knows what "unchanged"
+ * means — Cancel then asks before discarding, exactly as it did before the
+ * lock interrupted.
+ */
+data class EditSession(val initial: EntryDraft, val current: EntryDraft) {
+    val dirty get() = current != initial
+
+    fun toJson(): String =
+        JSONObject().put("initial", initial.toJson()).put("current", current.toJson()).toString()
+
+    companion object {
+        fun fromJson(s: String): EditSession {
+            val o = JSONObject(s)
+            return EditSession(
+                EntryDraft.fromJson(o.getJSONObject("initial")),
+                EntryDraft.fromJson(o.getJSONObject("current")),
+            )
+        }
     }
 }
 

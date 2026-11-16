@@ -27,7 +27,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,8 +66,13 @@ fun EntryEditor(
     error: String?,
     onSave: (EntryDraft) -> Unit,
     onCancel: () -> Unit,
+    /** What the editor held when auto-lock interrupted it, if anything. */
+    restored: EntryDraft? = null,
+    /** Every change, so that a lock always seals the latest draft. */
+    onDraftChange: (EntryDraft) -> Unit = {},
 ) {
-    var draft by remember { mutableStateOf(initial) }
+    var draft by remember { mutableStateOf(restored ?: initial) }
+    LaunchedEffect(draft) { onDraftChange(draft) }
     var showPassword by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
     val isNew = initial.id == null
@@ -105,6 +112,25 @@ fun EntryEditor(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             error?.let { ErrorBanner(it) }
+
+            // Otherwise the editor reappearing after an unlock is a mystery.
+            if (restored != null && error == null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(DpIcons.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            "The vault locked while you were editing. Your unsaved changes are back — nothing has been saved yet.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+            }
 
             // Type is fixed once an entry exists: switching a login to a card
             // would leave the login's fields orphaned in the JSON.

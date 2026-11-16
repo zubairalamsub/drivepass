@@ -202,6 +202,9 @@ fun DrivePassApp(vm: VaultViewModel) {
                                 onDeleteEntry = vm::deleteEntry,
                                 onUndoDelete = vm::undoDelete,
                                 onDismissSaveError = vm::dismissSaveError,
+                                onEditing = vm::editing,
+                                onEditingDone = vm::editingDone,
+                                onRestoredEditConsumed = vm::restoredEditConsumed,
                             )
                         }
                     }
